@@ -331,7 +331,7 @@ const forgePaper = {
 const forgeMatrix = {
   name: 'ss-matrix',
   label: '数字雨',
-  description: '纯黑底磷光绿，片假名数字雨动画背景',
+  description: '纯黑底磷光绿，黑客帝国式纯数字雨动画背景',
   colors: {
     background: '#000000',
     foreground: '#00FF41',
@@ -1001,6 +1001,10 @@ const STORAGE_VIDEO_LIB_KEY = 'ss-video-lib'
 const VIDEO_LIB_MAX = 5
 const IDB_NAME = 'skin-studio-media'
 const IDB_STORE = 'videos'
+// 全局特效配置（独立于主题的「特效层」）：mode = auto(跟随主题) /
+// none(关闭) / matrix(数字雨) / hanzi(汉字雨)；rainFontSize / rainSpeed
+// 为 null 时跟随主题默认。可与任意配色主题搭配使用。
+const STORAGE_FX_KEY = 'ss-fx-v1'
 
 function readVideoLib() {
   try {
@@ -1014,6 +1018,26 @@ function readVideoLib() {
 
 function writeVideoLib(lib) {
   storage?.set(STORAGE_VIDEO_LIB_KEY, JSON.stringify(lib.slice(0, VIDEO_LIB_MAX)))
+}
+
+// ── 全局特效层（独立于主题，可与任意配色搭配）──
+function loadFxGlobal() {
+  try {
+    const raw = storage?.get(STORAGE_FX_KEY, null)
+    const o = raw ? JSON.parse(raw) : {}
+    return {
+      mode: ['auto', 'none', 'matrix', 'hanzi'].includes(o.mode) ? o.mode : 'auto',
+      rainFontSize: Number(o.rainFontSize) || null,
+      rainSpeed: Number(o.rainSpeed) || null,
+      scanlines: ['on', 'off'].includes(o.scanlines) ? o.scanlines : 'auto'
+    }
+  } catch {
+    return { mode: 'auto', rainFontSize: null, rainSpeed: null, scanlines: 'auto' }
+  }
+}
+
+function saveFxGlobal(fx) {
+  storage?.set(STORAGE_FX_KEY, JSON.stringify(fx))
 }
 
 function idbOpen() {
@@ -1250,7 +1274,9 @@ let codePaintRaf = null
 let prevHtmlBg = null
 
 function buildCss(theme) {
-  const f = theme.forge || {}
+  // resolveFx：全局特效层（数字雨/汉字雨/关闭）会影响玻璃透明度判断，
+  // 所以这里也要合并，而不是只看主题自带 forge。
+  const f = resolveFx(theme)
   const extra = f.extraColors || {}
   const hasMedia = Boolean(f.backgroundImage || f.backgroundVideo)
   const fxOnly = Boolean(f.matrixRain || f.scanlines) && !hasMedia
@@ -1682,8 +1708,8 @@ function ensureObserver() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FX_ID = 'skin-studio-fx'
-// 数字雨（原版 Matrix 风）：片假名 + 字母数字。
-const RAIN_LEGACY_CHARS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789ABCDEF'
+// 数字雨（黑客帝国风）：纯数字组合——0-9，去掉了原版混入的片假名。
+const RAIN_LEGACY_CHARS = '0123456789'
 // 汉字雨字符集（繁体）：文言虚词 + 常用字 + 千字文片段，营造「汉字从墨夜坠落」的意境。
 const RAIN_CHARS =
   '道可道非常道名可名非常名天地玄黃宇宙洪荒日月盈昃辰宿列張之乎者也兮哉山水雲月風花雪雨墨紙硯琴棋書畫春秋冬夏龍鳳龜鶴松竹梅蘭荷菊詩詞賦曲夢夜霞霧一二三四五六七八九十'
@@ -1697,6 +1723,8 @@ let rainCanvas = null
 let rainCtx = null
 let rainRaf = null
 let rainCols = []
+// 数字墙（黑客帝国风）网格：满屏数字原地刷新流动。每个格子 {x, y, ch, t}。
+let wallCells = null
 let fxResizeObserver = null
 let overlayEl = null
 
@@ -1726,6 +1754,7 @@ function removeFx() {
   rainCanvas = null
   rainCtx = null
   rainCols = []
+  wallCells = null
   overlayEl = null
   if (fxContainer) {
     fxContainer.remove()
@@ -1751,16 +1780,84 @@ function resizeRain() {
       chars: []
     }))
   } else {
-    // 数字雨：原版单字 + 拖尾。
-    const cols = Math.ceil(rainCanvas.width / fontSize)
-    rainCols = Array.from({ length: cols }, () => Math.floor(Math.random() * -rainCanvas.height) / fontSize)
+    // 数字墙（黑客帝国风）：满屏数字网格，原地随机刷新流动——不下落、
+    // 不堆叠。网格步长 1.15x 字号：满屏但不挤成一团，留一点呼吸感。
+    const step = fontSize * 1.15
+    const cols = Math.ceil(rainCanvas.width / step)
+    const rows = Math.ceil(rainCanvas.height / step)
+    wallCells = []
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        wallCells.push({
+          x: c * step,
+          y: r * step + fontSize, // baseline 对齐格底
+          ch: RAIN_LEGACY_CHARS[Math.floor(Math.random() * RAIN_LEGACY_CHARS.length)],
+          t: Math.floor(Math.random() * 24), // 初始随机错开——避免整屏同时闪烁
+          lit: Math.random() < 0.07 // 亮点状态随刷新更新，重绘时沿用（不闪）
+        })
+      }
+    }
+    paintWallAll()
   }
 }
 
-// 雨特效参数：读当前激活主题的 forge（预设主题自带参数，自定义主题由面板调节）。
+// 数字墙颜色：固定黑客帝国荧光绿（科技感标志色），暗度低不晃眼。
+// 不跟随主题 accent——主题色可能是白/暖色，会让数字墙发白失去科技感
+//（与汉字雨固定宣纸米白同理：固定色在玻璃/壁纸之下最可靠）。
+function wallColors() {
+  return {
+    dim: 'rgba(0, 255, 65, 0.35)',
+    lit: 'rgba(0, 255, 65, 0.72)'
+  }
+}
+
+// 数字墙：一次性绘制全部格子（初始化 / 窗口变化重建网格后调用）。
+function paintWallAll() {
+  if (!rainCtx || !wallCells) return
+  const ctx = rainCtx
+  const { dim, lit } = wallColors()
+  ctx.font =
+    rainFontSizeOf(rainThemeForge()) + 'px "JetBrains Mono", ui-monospace, monospace'
+  for (let i = 0; i < wallCells.length; i++) {
+    const c = wallCells[i]
+    ctx.fillStyle = c.lit ? lit : dim
+    ctx.fillText(c.ch, c.x, c.y)
+  }
+}
+
+// ── 全局特效层 ──
+// fxGlobal（独立于主题，面板「背景特效」分类调节）：mode=auto 时跟随
+// 主题自带特效；none/matrix/hanzi 时全局覆盖，与任何配色主题搭配。
+// rainFontSize/rainSpeed 非空时覆盖主题默认值。
+let fxGlobal = null
+
+function resolveFx(theme) {
+  const f = theme?.forge || {}
+  const g = fxGlobal || {}
+  const out = { ...f }
+  if (g.mode === 'matrix') {
+    out.matrixRain = true
+    out.hanziRain = false
+  } else if (g.mode === 'hanzi') {
+    out.hanziRain = true
+    out.matrixRain = false
+  } else if (g.mode === 'none') {
+    out.matrixRain = false
+    out.hanziRain = false
+  }
+  if (g.rainFontSize) out.rainFontSize = g.rainFontSize
+  if (g.rainSpeed) out.rainSpeed = g.rainSpeed
+  // CRT 扫描线：auto=跟随主题 / on=强制开启 / off=强制关闭。
+  if (g.scanlines === 'on') out.scanlines = true
+  else if (g.scanlines === 'off') out.scanlines = false
+  return out
+}
+
+// 雨特效参数：读当前激活主题的 forge（预设主题自带参数，自定义主题由面板调节），
+// 并叠加全局特效层覆盖（resolveFx）。
 function rainThemeForge() {
   const activeName = document.documentElement.dataset.hermesTheme
-  return activeName ? themeMap.get(activeName)?.forge : null
+  return activeName ? resolveFx(themeMap.get(activeName)) : null
 }
 function rainFontSizeOf(forge) {
   // 汉字雨默认 26px（大字清晰），数字雨保持原版 15px。
@@ -1806,15 +1903,11 @@ function tickRainInner() {
     resizeRain()
   }
   // 擦除策略：汉字雨用 clearRect 全清重绘——零残影、字迹绝对清晰、
-  // 字距固定、慢慢飘不堆叠；数字雨保留原版淡擦除拖尾（0.09）。
+  // 字距固定、慢慢飘不堆叠；数字墙不清屏——只有变化的格子被新数字
+  // 覆盖，天然「原地刷新」无残影、无拖尾。
   if (isHanzi) {
     ctx.clearRect(0, 0, w, h)
-  } else {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.09)'
-    ctx.fillRect(0, 0, w, h)
   }
-  const accent =
-    getComputedStyle(document.documentElement).getPropertyValue('--ui-accent').trim() || '#00FF41'
   // 汉字雨印章：固定亮朱砂（不读变量——玻璃之下要醒目）。
   const seal = '#E64A3A'
 
@@ -1859,14 +1952,25 @@ function tickRainInner() {
     }
     ctx.restore()
   } else {
-    // 数字雨：原版单字 + 拖尾（荧光绿系）。
+    // 数字墙（黑客帝国风）：满屏数字网格原地刷新流动——不堆叠、不下落。
+    // canvas 在 FX 容器（z-index:-1）里，永远位于文字之下，纯背景层。
+    if (!wallCells) return
+    // 每帧全清重绘——绝不让旧像素残留叠加（残留会越叠越糊、越叠越白）。
+    ctx.clearRect(0, 0, w, h)
     ctx.font = fontSize + 'px "JetBrains Mono", ui-monospace, monospace'
-    for (let i = 0; i < rainCols.length; i++) {
-      ctx.fillStyle = accent
-      const ch = RAIN_LEGACY_CHARS[Math.floor(Math.random() * RAIN_LEGACY_CHARS.length)]
-      ctx.fillText(ch, i * fontSize, rainCols[i] * fontSize)
-      if (rainCols[i] * fontSize > h && Math.random() > 0.975) rainCols[i] = 0
-      rainCols[i] += speed
+    const { dim, lit } = wallColors()
+    // 刷新节奏：speed=1 → 平均 14 帧（~0.23s）换一批；speed 越大变化越快。
+    const base = Math.max(3, 14 / speed)
+    for (let i = 0; i < wallCells.length; i++) {
+      const c = wallCells[i]
+      c.t -= 1
+      if (c.t <= 0) {
+        c.t = Math.round(base * (0.5 + Math.random() * 1.5))
+        c.ch = RAIN_LEGACY_CHARS[Math.floor(Math.random() * RAIN_LEGACY_CHARS.length)]
+        c.lit = Math.random() < 0.07
+      }
+      ctx.fillStyle = c.lit ? lit : dim
+      ctx.fillText(c.ch, c.x, c.y)
     }
   }
 }
@@ -1903,7 +2007,8 @@ function addScanlines() {
 }
 
 function startFx(theme) {
-  const f = theme.forge || {}
+  // 用 resolveFx 合并全局特效层——全局覆盖（数字雨/汉字雨/关闭）优先于主题自带。
+  const f = resolveFx(theme)
   const wantsRain = Boolean(f.matrixRain || f.hanziRain)
   if (!wantsRain && rainRaf) {
     // 切到无雨主题：停掉正在运行的雨（否则雨会一直下）。
@@ -1935,7 +2040,9 @@ function startFx(theme) {
     overlayEl = null
   }
   if (f.matrixRain || f.hanziRain) startMatrixRain()
-  if (f.scanlines) addScanlines()
+  // 扫描线与数字墙互斥：满屏数字 + 满屏横线会叠成噪点/横纹（用户实测：
+  // 「屏幕上好多横线」）。数字墙激活时自动跳过扫描线；汉字雨较稀疏可共存。
+  if (f.scanlines && !f.matrixRain) addScanlines()
 }
 
 function stopFx() {
@@ -2250,6 +2357,7 @@ export default {
     ctxOf = ctx
     storage = ctx.storage
     customTheme = loadCustom()
+    fxGlobal = loadFxGlobal()
 
     // Clean up any FX container left behind by a previous incarnation of this
     // module (hot-reload re-evaluates the file; the DOM keeps old canvases).
@@ -2359,6 +2467,8 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
   const [localVideo, setLocalVideo] = useState(null) // { name, size, persistent } of the picked video
   const [videoLib, setVideoLib] = useState(() => readVideoLib()) // 已保存的视频媒体库
   const [applyName, setApplyName] = useState(CUSTOM_NAME)
+  // 全局特效层：独立于主题，可与任意配色主题搭配（auto=跟随主题）。
+  const [fx, setFx] = useState(() => loadFxGlobal())
   // 诊断信息：当前主题、代码块数量与计算样式（用于排查配色不生效问题）。
   const [diag, setDiag] = useState(null)
   const timer = useRef(null)
@@ -2557,6 +2667,18 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
   function bumpExtras(patch) {
     setState(prev => ({ ...prev, forge: { ...prev.forge, ...patch } }))
     setSaved(false)
+  }
+
+  // 全局特效层修改：写 storage + 更新引擎变量 + 立即重绘（雨类型/字号/
+  // 速度、玻璃透明度都实时生效，且不依赖当前是哪个主题）。
+  function bumpFx(patch) {
+    setFx(prev => {
+      const next = { ...prev, ...patch }
+      fxGlobal = next
+      saveFxGlobal(next)
+      return next
+    })
+    refresh()
   }
 
   function bumpExtraColor(key, value) {
@@ -3100,23 +3222,23 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                           })
                   ]
                 }),
-              // 背景特效（雨）——作用于自定义主题，预设主题自带固定参数。
+              // 背景特效（全局层）——独立于主题，可与任意配色主题搭配。
               jsxs(Section, {
-                title: '背景特效（自定义主题）',
+                title: '背景特效（全局层）',
                 children: jsxs('div', {
                   className: 'flex flex-col gap-2',
                   children: [
                     jsx(Segmented, {
                       options: [
+                        ['auto', '跟随主题'],
                         ['none', '无'],
-                        ['hanzi', '汉字雨'],
-                        ['matrix', '数字雨']
+                        ['matrix', '数字雨'],
+                        ['hanzi', '汉字雨']
                       ],
-                      value: extras.hanziRain ? 'hanzi' : extras.matrixRain ? 'matrix' : 'none',
-                      onChange: v =>
-                        bumpExtras({ matrixRain: v === 'matrix', hanziRain: v === 'hanzi' })
+                      value: fx.mode,
+                      onChange: v => bumpFx({ mode: v })
                     }),
-                    (extras.hanziRain || extras.matrixRain) &&
+                    fx.mode !== 'auto' &&
                       jsx('div', {
                         className: 'flex flex-col gap-2',
                         children: [
@@ -3128,13 +3250,13 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                                 min: 12,
                                 max: 48,
                                 step: 1,
-                                value: extras.rainFontSize || 26,
-                                onChange: e => bumpExtras({ rainFontSize: Number(e.target.value) }),
+                                value: fx.rainFontSize || (fx.mode === 'hanzi' ? 26 : 15),
+                                onChange: e => bumpFx({ rainFontSize: Number(e.target.value) }),
                                 className: 'flex-1 accent-(--ui-accent)'
                               }),
                               jsx('span', {
                                 className: 'w-9 text-right font-mono text-[0.625rem] text-(--ui-text-tertiary)',
-                                children: '字 ' + (extras.rainFontSize || 26) + 'px'
+                                children: '字 ' + (fx.rainFontSize || (fx.mode === 'hanzi' ? 26 : 15)) + 'px'
                               })
                             ]
                           }),
@@ -3146,22 +3268,56 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                                 min: 0.2,
                                 max: 2,
                                 step: 0.05,
-                                value: extras.rainSpeed || (extras.hanziRain ? (extras.backgroundImage || extras.backgroundVideo ? 0.5 : 0.3) : 1),
-                                onChange: e => bumpExtras({ rainSpeed: Number(e.target.value) }),
+                                value:
+                                  fx.rainSpeed ||
+                                  (fx.mode === 'hanzi'
+                                    ? extras.backgroundImage || extras.backgroundVideo
+                                      ? 0.5
+                                      : 0.3
+                                    : 1),
+                                onChange: e => bumpFx({ rainSpeed: Number(e.target.value) }),
                                 className: 'flex-1 accent-(--ui-accent)'
                               }),
                               jsx('span', {
                                 className: 'w-9 text-right font-mono text-[0.625rem] text-(--ui-text-tertiary)',
-                                children: '速 ' + (extras.rainSpeed || (extras.hanziRain ? (extras.backgroundImage || extras.backgroundVideo ? 0.5 : 0.3) : 1)).toFixed(2) + 'x'
+                                children:
+                                  '速 ' +
+                                  (fx.rainSpeed ||
+                                    (fx.mode === 'hanzi'
+                                      ? extras.backgroundImage || extras.backgroundVideo
+                                        ? 0.5
+                                        : 0.3
+                                      : 1)).toFixed(2) +
+                                  'x'
                               })
                             ]
                           })
                         ]
                       }),
+                    jsxs('div', {
+                      className: 'flex items-center justify-between gap-2',
+                      children: [
+                        jsx('span', {
+                          className: 'text-[0.625rem] text-(--ui-text-tertiary)',
+                          children: 'CRT 扫描线'
+                        }),
+                        jsx(Segmented, {
+                          options: [
+                            ['auto', '跟随主题'],
+                            ['on', '开启'],
+                            ['off', '关闭']
+                          ],
+                          value: fx.scanlines || 'auto',
+                          onChange: v => bumpFx({ scanlines: v })
+                        })
+                      ]
+                    }),
                     jsx('p', {
                       className: 'text-[0.625rem] leading-relaxed text-(--ui-text-quaternary)',
                       children:
-                        '汉字雨为繁体汉字+米白雨滴+朱砂红点缀。切换「皮肤工坊 · 自定义」主题后调节生效；预设主题（如「汉字雨」）使用各自默认参数。'
+                        fx.mode === 'auto'
+                          ? '跟随各主题自带的特效。选择「数字雨」或「汉字雨」即可全局叠加——搭配任意配色主题都生效。'
+                          : '已全局覆盖：切换任何配色主题都会保留此特效（数字雨为黑客帝国式纯数字；汉字雨为繁体汉字+米白雨滴+朱砂红点缀）。数字雨与扫描线互斥（自动跳过扫描线）。'
                     })
                   ]
                 })
