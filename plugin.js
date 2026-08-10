@@ -2169,31 +2169,31 @@ async function activateSkin(theme) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MAIN_TOKENS = [
-  ['background', 'Background'],
-  ['foreground', 'Foreground'],
-  ['primary', 'Primary'],
-  ['midground', 'Midground (accent)'],
-  ['ring', 'Ring / focus'],
-  ['accent', 'Accent soft'],
-  ['accentForeground', 'Accent fg'],
-  ['border', 'Border'],
-  ['input', 'Input'],
-  ['mutedForeground', 'Muted fg'],
-  ['secondary', 'Secondary'],
-  ['destructive', 'Destructive'],
-  ['userBubble', 'User bubble'],
-  ['card', 'Card']
+  ['background', '背景'],
+  ['foreground', '前景文字'],
+  ['primary', '主色'],
+  ['midground', '强调色'],
+  ['ring', '焦点环'],
+  ['accent', '柔和强调'],
+  ['accentForeground', '强调文字'],
+  ['border', '边框'],
+  ['input', '输入框'],
+  ['mutedForeground', '次要文字'],
+  ['secondary', '次要色'],
+  ['destructive', '危险色'],
+  ['userBubble', '用户气泡'],
+  ['card', '卡片']
 ]
 
 const EXTRA_TOKENS = [
-  ['uiRed', 'Red'],
-  ['uiOrange', 'Orange'],
-  ['uiYellow', 'Yellow'],
-  ['uiGreen', 'Green'],
-  ['uiCyan', 'Cyan'],
-  ['uiBlue', 'Blue'],
-  ['uiPurple', 'Purple'],
-  ['uiWarm', 'Warm']
+  ['uiRed', '红'],
+  ['uiOrange', '橙'],
+  ['uiYellow', '黄'],
+  ['uiGreen', '绿'],
+  ['uiCyan', '青'],
+  ['uiBlue', '蓝'],
+  ['uiPurple', '紫'],
+  ['uiWarm', '暖']
 ]
 
 const BOLD_OPTIONS = [
@@ -2276,7 +2276,7 @@ function ColorResetField({ label, value, onChange, onReset, defaultColor }) {
           isAuto &&
             jsx('span', {
               className: 'pointer-events-none absolute -right-1 -top-1 h-2 w-2 rounded-full border border-(--ui-bg-elevated) bg-(--ui-yellow)',
-              title: 'Auto'
+              title: '自动'
             })
         ]
       }),
