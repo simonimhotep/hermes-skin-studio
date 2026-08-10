@@ -1830,6 +1830,11 @@ function paintWallAll() {
 // 主题自带特效；none/matrix/hanzi 时全局覆盖，与任何配色主题搭配。
 // rainFontSize/rainSpeed 非空时覆盖主题默认值。
 let fxGlobal = null
+// 特效层变化事件：皮肤工坊有多个界面实例（侧边栏面板 + 完整页面），
+// 各自 useState 只在挂载时读一次——某实例修改后其他实例的显示会
+// 停留在旧值（用户实测「扫描线开启是关闭、关闭是开启」）。通过
+// 自定义事件广播，让所有实例实时同步。
+const FX_CHANGED_EVENT = 'skin-studio:fx-changed'
 
 function resolveFx(theme) {
   const f = theme?.forge || {}
@@ -2041,8 +2046,20 @@ function startFx(theme) {
   }
   if (f.matrixRain || f.hanziRain) startMatrixRain()
   // 扫描线与数字墙互斥：满屏数字 + 满屏横线会叠成噪点/横纹（用户实测：
-  // 「屏幕上好多横线」）。数字墙激活时自动跳过扫描线；汉字雨较稀疏可共存。
+  // 「屏幕上好多横线」）。数字墙激活时自动移除扫描线；汉字雨较稀疏可共存。
+  // 注意必须「加」与「移」成对——之前只加不移，背景切换（视频↔图片）后
+  // 已存在的扫描线 DOM 永远不会被清掉，横线又冒出来。
   if (f.scanlines && !f.matrixRain) addScanlines()
+  else removeScanlines()
+}
+
+// 移除 CRT 扫描线层（与 addScanlines 成对；数字墙激活 / 全局关闭 /
+// 切到无扫描线主题时清理，否则 DOM 残留导致横线复活）。
+function removeScanlines() {
+  const host = fxContainer
+  if (!host) return
+  const el = host.querySelector('.ss-scanlines')
+  if (el) el.remove()
 }
 
 function stopFx() {
@@ -2476,6 +2493,14 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
   const videoInputRef = useRef(null)
   const inactiveWarned = useRef(false)
 
+  // 特效层跨实例同步：其他界面实例（侧边栏面板/完整页面）修改后，
+  // 本实例的 fx state 跟随广播事件更新，开关显示不再停留在旧值。
+  useEffect(() => {
+    const onFxChanged = e => setFx(e.detail)
+    document.addEventListener(FX_CHANGED_EVENT, onFxChanged)
+    return () => document.removeEventListener(FX_CHANGED_EVENT, onFxChanged)
+  }, [])
+
   useEffect(() => {
     const t = setInterval(() => {
       try {
@@ -2670,14 +2695,17 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
   }
 
   // 全局特效层修改：写 storage + 更新引擎变量 + 立即重绘（雨类型/字号/
-  // 速度、玻璃透明度都实时生效，且不依赖当前是哪个主题）。
+  // 速度、玻璃透明度都实时生效，且不依赖当前是哪个主题）。同时广播
+  // FX_CHANGED_EVENT 让所有皮肤工坊界面实例（侧边栏面板/完整页面）同步。
   function bumpFx(patch) {
-    setFx(prev => {
-      const next = { ...prev, ...patch }
-      fxGlobal = next
-      saveFxGlobal(next)
-      return next
-    })
+    const next = {
+      ...(fxGlobal || { mode: 'auto', rainFontSize: null, rainSpeed: null, scanlines: 'auto' }),
+      ...patch
+    }
+    fxGlobal = next
+    saveFxGlobal(next)
+    setFx(next)
+    document.dispatchEvent(new CustomEvent(FX_CHANGED_EVENT, { detail: next }))
     refresh()
   }
 
