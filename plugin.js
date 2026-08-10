@@ -6,7 +6,7 @@
  *   - 全中文界面（原版为葡萄牙语）
  *   - 新增中国风主题：水墨 / 青花瓷 / 故宫 / 竹林 / 敦煌 / 汉字雨
  *   - 新增动漫风主题：EVA 初号机 / 高达 / 初音未来 / 鬼灭之刃
- *   - 汉字雨特效：中文汉字从墨夜坠落，偶见朱砂印章红（中国版数字雨）
+ *   - 汉字雨特效：中文汉字从墨夜坠落，偶见朱砂印章红（中国版数字墙）
  *
  * 技术机制沿用原版：在原生 DesktopTheme 模型之外扩展——
  *   - 扩展调色板（应用固定的 --ui-* 色标：红橙黄绿青蓝紫暖、diff 增删）
@@ -330,8 +330,8 @@ const forgePaper = {
 /** Matrix — pure black, phosphor green, animated digital rain background. */
 const forgeMatrix = {
   name: 'ss-matrix',
-  label: '数字雨',
-  description: '纯黑底磷光绿，黑客帝国式纯数字雨动画背景',
+  label: '数字墙',
+  description: '纯黑底磷光绿，黑客帝国式纯数字墙动画背景',
   colors: {
     background: '#000000',
     foreground: '#00FF41',
@@ -895,7 +895,7 @@ const ssDunhuang = filmTheme({
 const ssHanziRain = filmTheme({
   name: 'ss-hanzi-rain',
   label: '汉字雨',
-  description: '墨黑宣纸上汉字飘落，偶见朱砂印章红——中国版数字雨',
+  description: '墨黑宣纸上汉字飘落，偶见朱砂印章红——中国版数字墙',
   bg: '#0B0A08',
   fg: '#F5F1E8',
   accent: '#C0392B',
@@ -1002,7 +1002,7 @@ const VIDEO_LIB_MAX = 5
 const IDB_NAME = 'skin-studio-media'
 const IDB_STORE = 'videos'
 // 全局特效配置（独立于主题的「特效层」）：mode = auto(跟随主题) /
-// none(关闭) / matrix(数字雨) / hanzi(汉字雨)；rainFontSize / rainSpeed
+// none(关闭) / matrix(数字墙) / hanzi(汉字雨)；rainFontSize / rainSpeed
 // 为 null 时跟随主题默认。可与任意配色主题搭配使用。
 const STORAGE_FX_KEY = 'ss-fx-v1'
 
@@ -1274,7 +1274,7 @@ let codePaintRaf = null
 let prevHtmlBg = null
 
 function buildCss(theme) {
-  // resolveFx：全局特效层（数字雨/汉字雨/关闭）会影响玻璃透明度判断，
+  // resolveFx：全局特效层（数字墙/汉字雨/关闭）会影响玻璃透明度判断，
   // 所以这里也要合并，而不是只看主题自带 forge。
   const f = resolveFx(theme)
   const extra = f.extraColors || {}
@@ -1708,7 +1708,7 @@ function ensureObserver() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FX_ID = 'skin-studio-fx'
-// 数字雨（黑客帝国风）：纯数字组合——0-9，去掉了原版混入的片假名。
+// 数字墙（黑客帝国风）：纯数字组合——0-9，去掉了原版混入的片假名。
 const RAIN_LEGACY_CHARS = '0123456789'
 // 汉字雨字符集（繁体）：文言虚词 + 常用字 + 千字文片段，营造「汉字从墨夜坠落」的意境。
 const RAIN_CHARS =
@@ -1860,13 +1860,13 @@ function rainThemeForge() {
   return activeName ? resolveFx(themeMap.get(activeName)) : null
 }
 function rainFontSizeOf(forge) {
-  // 汉字雨默认 26px（大字清晰），数字雨保持原版 15px。
+  // 汉字雨默认 26px（大字清晰），数字墙保持原版 15px。
   const def = forge?.hanziRain ? 26 : RAIN_FONT_SIZE
   return Math.max(12, Math.min(48, Number(forge?.rainFontSize) || def))
 }
 function rainSpeedOf(forge) {
   // 汉字雨默认速度跟随背景：有背景图/视频时 0.5（动感），无背景图时 0.3
-  //（纯色背景上运动感更强，慢一点视觉才一致）。数字雨保持原版速度（1）。
+  //（纯色背景上运动感更强，慢一点视觉才一致）。数字墙保持原版速度（1）。
   const def = forge?.hanziRain
     ? forge.backgroundImage || forge.backgroundVideo
       ? 0.5
@@ -1977,7 +1977,7 @@ function tickRainInner() {
 function startMatrixRain() {
   if (typeof document === 'undefined') return
   if (rainCanvas) {
-    // canvas 已存在（皮肤工坊主题之间切换：数字雨↔汉字雨）——必须重建列
+    // canvas 已存在（皮肤工坊主题之间切换：数字墙↔汉字雨）——必须重建列
     // 布局，否则列数组类型不匹配（数字 vs 对象），tickRain 直接崩溃，
     // 雨消失。
     resizeRain()
@@ -2007,7 +2007,7 @@ function addScanlines() {
 }
 
 function startFx(theme) {
-  // 用 resolveFx 合并全局特效层——全局覆盖（数字雨/汉字雨/关闭）优先于主题自带。
+  // 用 resolveFx 合并全局特效层——全局覆盖（数字墙/汉字雨/关闭）优先于主题自带。
   const f = resolveFx(theme)
   const wantsRain = Boolean(f.matrixRain || f.hanziRain)
   if (!wantsRain && rainRaf) {
@@ -3232,7 +3232,7 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                       options: [
                         ['auto', '跟随主题'],
                         ['none', '无'],
-                        ['matrix', '数字雨'],
+                        ['matrix', '数字墙'],
                         ['hanzi', '汉字雨']
                       ],
                       value: fx.mode,
@@ -3316,8 +3316,8 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                       className: 'text-[0.625rem] leading-relaxed text-(--ui-text-quaternary)',
                       children:
                         fx.mode === 'auto'
-                          ? '跟随各主题自带的特效。选择「数字雨」或「汉字雨」即可全局叠加——搭配任意配色主题都生效。'
-                          : '已全局覆盖：切换任何配色主题都会保留此特效（数字雨为黑客帝国式纯数字；汉字雨为繁体汉字+米白雨滴+朱砂红点缀）。数字雨与扫描线互斥（自动跳过扫描线）。'
+                          ? '跟随各主题自带的特效。选择「数字墙」或「汉字雨」即可全局叠加——搭配任意配色主题都生效。'
+                          : '已全局覆盖：切换任何配色主题都会保留此特效（数字墙为黑客帝国式纯数字；汉字雨为繁体汉字+米白雨滴+朱砂红点缀）。数字墙与扫描线互斥（自动跳过扫描线）。'
                     })
                   ]
                 })
