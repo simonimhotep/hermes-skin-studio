@@ -2007,7 +2007,9 @@ function skinTokensFromTheme(theme) {
 // an app update reset its local storage. Retries a few times in case the
 // gateway is still coming up during boot.
 async function reassertConfiguredSkin() {
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  // 启动时 hermes serve 可能还没就绪 → 快速重试（500ms 间隔 × 5 次，总计 ~2.5s 最坏情况）。
+  // 之前是 3s 间隔 × 3 次，用户看到最长 9s 的"无皮肤"闪屏。
+  for (let attempt = 1; attempt <= 5; attempt++) {
     try {
       const cfg = await host.request('config.get', { key: 'skin' })
       const raw = cfg && cfg.value !== undefined ? cfg.value : cfg
@@ -2019,8 +2021,8 @@ async function reassertConfiguredSkin() {
       }
       return
     } catch (e) {
-      if (attempt < 3) {
-        await new Promise(r => setTimeout(r, 3000))
+      if (attempt < 5) {
+        await new Promise(r => setTimeout(r, 500))
       } else {
         console.error('[skin-studio] reassert gave up: ' + (e && e.message ? e.message : String(e)))
       }
@@ -2256,6 +2258,14 @@ export default {
 
     for (const theme of PRESETS) registerTheme(theme)
     customDisposer = registerTheme(customTheme)
+
+    // ── 立刻注入 CSS — 放在所有 ctx.register 之前，尽可能缩短启动闪屏 ──
+    // 如果 data-hermes-theme 已经是皮肤工坊主题（上次正常退出时写入的），
+    // 这里同步注入 CSS，不需要等后端；如果还不是（后端还没就绪），observer
+    // 会在 skin.changed 广播后自动补上。
+    ensureObserver()
+    refresh()
+
     // 从 IndexedDB 异步恢复本地视频（大视频持久化）。
     restoreLocalVideo()
 
@@ -2315,10 +2325,7 @@ export default {
       }
     })
 
-    // Paint as soon as we load (the forge theme may already be active) and
-    // keep watching for theme switches.
-    ensureObserver()
-    refresh()
+    // CSS 已在主题注册后同步注入（见 register() 开头），这里不需要再调。
   }
 }
 
