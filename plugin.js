@@ -758,6 +758,43 @@ function themeFromPalette(hexes) {
 // the full DesktopTheme shape the app expects (dark + light derived).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 从暗色主题推导亮色变体（桌面版切换 light 模式时自动应用）。
+// 原则：背景大幅提亮、正文转深色、边框/卡片用浅灰层级、
+// 强调色保持色相（在浅背景上依然醒目）。复用 mix/readableOn 保证对比度。
+function lightVariant(d) {
+  if (!d) return d
+  const bg = mix(d.background, '#FFFFFF', 0.84)
+  const fg = mix(d.foreground, '#000000', 0.7)
+  const border = mix(bg, fg, 0.18)
+  const accent = d.midground || d.primary || d.ring || d.accent
+  return {
+    background: bg,
+    foreground: fg,
+    card: mix(bg, '#FFFFFF', 0.45),
+    cardForeground: fg,
+    muted: mix(bg, '#000000', 0.04),
+    mutedForeground: mix(fg, bg, 0.42),
+    popover: mix(bg, '#FFFFFF', 0.6),
+    popoverForeground: fg,
+    primary: accent,
+    primaryForeground: readableOn(accent),
+    secondary: mix(bg, accent, 0.1),
+    secondaryForeground: fg,
+    accent: mix(bg, accent, 0.14),
+    accentForeground: fg,
+    border,
+    input: border,
+    ring: accent,
+    midground: accent,
+    destructive: d.destructive,
+    destructiveForeground: readableOn(d.destructive),
+    sidebarBackground: mix(bg, '#FFFFFF', 0.32),
+    sidebarBorder: border,
+    userBubble: mix(bg, accent, 0.12),
+    userBubbleBorder: border
+  }
+}
+
 function filmTheme({ name, label, description, bg, fg, accent, border, destructive, mutedFg, extraColors, boldLevel = 1, overlayOpacity = 0.3, scanlines, matrixRain, hanziRain }) {
   const dark = {
     background: bg,
@@ -1801,14 +1838,15 @@ function resizeRain() {
   }
 }
 
-// 数字墙颜色：固定黑客帝国荧光绿（科技感标志色），暗度低不晃眼。
+// 数字墙颜色：黑客帝国荧光绿（科技感标志色），暗度低不晃眼。
+// 暗色模式用荧光绿；亮色模式用深绿——荧光绿在浅背景上会看不清。
 // 不跟随主题 accent——主题色可能是白/暖色，会让数字墙发白失去科技感
 //（与汉字雨固定宣纸米白同理：固定色在玻璃/壁纸之下最可靠）。
 function wallColors() {
-  return {
-    dim: 'rgba(0, 255, 65, 0.35)',
-    lit: 'rgba(0, 255, 65, 0.72)'
-  }
+  const dark = (document.documentElement.dataset.hermesMode || 'dark') !== 'light'
+  return dark
+    ? { dim: 'rgba(0, 255, 65, 0.35)', lit: 'rgba(0, 255, 65, 0.72)' }
+    : { dim: 'rgba(0, 100, 55, 0.4)', lit: 'rgba(0, 140, 75, 0.75)' }
 }
 
 // 数字墙：一次性绘制全部格子（初始化 / 窗口变化重建网格后调用）。
@@ -2087,6 +2125,11 @@ function registerTheme(theme) {
   // Every theme carries the Text-tab defaults in its .forge extras (the app
   // ignores unknown keys; we read them back in buildCss).
   const merged = { ...theme, forge: { ...TEXT_DEFAULTS, ...(theme.forge || {}) } }
+  // 亮色变体：所有主题的 colors/darkColors 目前都是暗色（同一套），
+  // 桌面版切 light 模式时会错误地显示暗色。这里统一为 colors 推导
+  // 真正的亮色版——切换明暗时主题自动跟随。
+  const darkPal = merged.darkColors || merged.colors
+  if (darkPal) merged.colors = lightVariant(darkPal)
   themeMap.set(merged.name, merged)
   if (merged.name === CUSTOM_NAME) customTheme = merged
   return ctxOf.register({ id: 'theme:' + merged.name, area: THEMES_AREA, data: merged })
