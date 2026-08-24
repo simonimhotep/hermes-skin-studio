@@ -1042,6 +1042,9 @@ const IDB_STORE = 'videos'
 // none(关闭) / matrix(数字墙) / hanzi(汉字雨)；rainFontSize / rainSpeed
 // 为 null 时跟随主题默认。可与任意配色主题搭配使用。
 const STORAGE_FX_KEY = 'ss-fx-v1'
+// 界面明暗模式（桌面版从 data-hermes-mode 属性读取；无属性 = 跟随系统
+// prefers-color-scheme）。插件自行持久化，重启时 register 重新应用。
+const UI_MODE_KEY = 'ss-ui-mode'
 
 function readVideoLib() {
   try {
@@ -1075,6 +1078,100 @@ function loadFxGlobal() {
 
 function saveFxGlobal(fx) {
   storage?.set(STORAGE_FX_KEY, JSON.stringify(fx))
+}
+
+// ── 界面明暗模式 ──
+function loadUiMode() {
+  try {
+    const v = storage?.get(UI_MODE_KEY, null)
+    return ['light', 'dark', 'system'].includes(v) ? v : 'system'
+  } catch {
+    return 'system'
+  }
+}
+
+function saveUiMode(mode) {
+  storage?.set(UI_MODE_KEY, mode)
+}
+
+// 桌面版 mode 的持久化 key（app 源码：context-BPidiHrn.js）
+// Mt=`hermes-desktop-mode-v1`，值：'light' | 'dark' | 'system'。
+// app 的 ThemeProvider 监听 storage 事件——该 key 在允许触发集
+// Ht = [theme-v2, mode-v1, profile-themes-v1, profile-modes-v1] 内，
+// 事件到达后重新解析 mode → ThemeProvider 用 colors/darkColors 重渲染。
+const DESKTOP_MODE_KEY = 'hermes-desktop-mode-v1'
+
+// 核心配色变量清单（app 应用主题时设置到 documentElement 的 inline style；
+// 皮肤工坊后写即赢——这是「强制换配色」的最终武器，不依赖 app 的 mode state）。
+const SEED_VARS = [
+  ['--theme-foreground', 'foreground'],
+  ['--theme-primary', 'primary'],
+  ['--theme-secondary', 'secondary'],
+  ['--theme-accent-soft', 'accent'],
+  ['--theme-midground', 'midground'],
+  ['--theme-warm', 'primary'],
+  ['--theme-background-seed', 'background'],
+  ['--theme-sidebar-seed', 'sidebarBackground'],
+  ['--theme-card-seed', 'card'],
+  ['--theme-elevated-seed', 'popover'],
+  ['--theme-bubble-seed', 'userBubble']
+]
+const DT_VARS = [
+  ['--dt-primary-foreground', 'primaryForeground'],
+  ['--dt-secondary-foreground', 'secondaryForeground'],
+  ['--dt-accent-foreground', 'accentForeground'],
+  ['--dt-border', 'border'],
+  ['--dt-input', 'input'],
+  ['--dt-ring', 'ring'],
+  ['--dt-muted', 'muted'],
+  ['--dt-destructive', 'destructive'],
+  ['--dt-destructive-foreground', 'destructiveForeground'],
+  ['--dt-sidebar-border', 'sidebarBorder'],
+  ['--dt-user-bubble-border', 'userBubbleBorder']
+]
+
+// 强制把当前皮肤工坊主题的配色（亮色副本 / 暗色）写入 app 的核心变量。
+// mode: 'light' | 'dark' | 'system'（system 按系统偏好解析）。
+// 每个主题都带亮色副本（registerTheme 注入的 colors=lightVariant），
+// 切换明暗 = 换上对应副本——不表显、不新增主题，符合「主题双色」设计。
+function forcePalette(mode) {
+  const activeName = document.documentElement.dataset.hermesTheme
+  const theme = activeName ? themeMap.get(activeName) : null
+  if (!theme) return
+  const isDark = mode === 'dark' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const pal = isDark ? theme.darkColors || theme.colors : theme.colors || theme.darkColors
+  if (!pal) return
+  const doc = document.documentElement
+  for (const [varName, key] of SEED_VARS) {
+    const v = pal[key] || pal.midground || pal.ring
+    if (v) doc.style.setProperty(varName, v)
+  }
+  for (const [varName, key] of DT_VARS) {
+    const v = pal[key] || pal.border
+    if (v) doc.style.setProperty(varName, v)
+  }
+  // 背景兜底：body inline important 赢过 app 样式（html 保持透明——
+  // applyForge 里设置，是 FX 壁纸/雨层可见的前提）。
+  document.body.style.setProperty('background', pal.background, 'important')
+  doc.style.setProperty('color-scheme', isDark ? 'dark' : 'light')
+}
+
+// 应用明暗（用户选择的界面明暗）：
+// 1) 正式路径：写 localStorage + storage 事件（app 自己重新解析）
+// 2) 强制路径：皮肤工坊直接把当前主题的对应配色副本写入核心变量——
+//    即使 app 未切换也立即生效；延迟再覆盖一次，防 app 重渲染覆盖。
+function applyUiMode(mode) {
+  try {
+    window.localStorage.setItem(DESKTOP_MODE_KEY, mode)
+    window.dispatchEvent(
+      new StorageEvent('storage', { key: DESKTOP_MODE_KEY, newValue: mode })
+    )
+  } catch {
+    // 非致命
+  }
+  forcePalette(mode)
+  setTimeout(() => forcePalette(mode), 120)
+  setTimeout(() => forcePalette(mode), 500)
 }
 
 function idbOpen() {
@@ -1585,6 +1682,9 @@ function applyForge(theme) {
   // 代码块 inline 着色（立即处理已有元素 + 持续监听新增元素）。
   ensureCodeObserver()
   paintCodeInline()
+  // 强制配色：主题每次重绘都按用户选择的界面明暗重新写入核心变量
+  //（亮色副本/暗色），防止 app 重渲染把配色覆盖回暗色。
+  forcePalette(loadUiMode())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1873,6 +1973,8 @@ let fxGlobal = null
 // 停留在旧值（用户实测「扫描线开启是关闭、关闭是开启」）。通过
 // 自定义事件广播，让所有实例实时同步。
 const FX_CHANGED_EVENT = 'skin-studio:fx-changed'
+// 界面明暗变化事件（多实例同步：侧边栏面板 ↔ 完整页面）。
+const UI_MODE_CHANGED_EVENT = 'skin-studio:ui-mode-changed'
 
 function resolveFx(theme) {
   const f = theme?.forge || {}
@@ -2418,6 +2520,16 @@ export default {
     storage = ctx.storage
     customTheme = loadCustom()
     fxGlobal = loadFxGlobal()
+    // 重启后恢复用户选择的界面明暗（跟随系统 = 删除属性）。
+    applyUiMode(loadUiMode())
+    // 跟随系统模式：监听系统明暗变化，自动换配色副本。
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)')
+      const onSystemMode = () => {
+        if (loadUiMode() === 'system') forcePalette('system')
+      }
+      mq.addEventListener ? mq.addEventListener('change', onSystemMode) : mq.addListener(onSystemMode)
+    }
 
     // Clean up any FX container left behind by a previous incarnation of this
     // module (hot-reload re-evaluates the file; the DOM keeps old canvases).
@@ -2529,6 +2641,8 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
   const [applyName, setApplyName] = useState(CUSTOM_NAME)
   // 全局特效层：独立于主题，可与任意配色主题搭配（auto=跟随主题）。
   const [fx, setFx] = useState(() => loadFxGlobal())
+  // 界面明暗：跟随系统 / 亮色 / 暗色（持久化，重启恢复）。
+  const [uiMode, setUiMode] = useState(() => loadUiMode())
   // 诊断信息：当前主题、代码块数量与计算样式（用于排查配色不生效问题）。
   const [diag, setDiag] = useState(null)
   const timer = useRef(null)
@@ -2542,6 +2656,13 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
     const onFxChanged = e => setFx(e.detail)
     document.addEventListener(FX_CHANGED_EVENT, onFxChanged)
     return () => document.removeEventListener(FX_CHANGED_EVENT, onFxChanged)
+  }, [])
+
+  // 界面明暗跨实例同步。
+  useEffect(() => {
+    const onUiModeChanged = e => setUiMode(e.detail)
+    document.addEventListener(UI_MODE_CHANGED_EVENT, onUiModeChanged)
+    return () => document.removeEventListener(UI_MODE_CHANGED_EVENT, onUiModeChanged)
   }, [])
 
   useEffect(() => {
@@ -2752,6 +2873,15 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
     refresh()
   }
 
+  // 界面明暗切换：持久化 + 应用（改 data-hermes-mode，桌面版自动跟随）
+  // + 广播同步所有面板实例。
+  function bumpUiMode(mode) {
+    setUiMode(mode)
+    saveUiMode(mode)
+    applyUiMode(mode)
+    document.dispatchEvent(new CustomEvent(UI_MODE_CHANGED_EVENT, { detail: mode }))
+  }
+
   function bumpExtraColor(key, value) {
     setState(prev => ({ ...prev, forge: { ...prev.forge, extraColors: { ...prev.forge.extraColors, [key]: value } } }))
     setSaved(false)
@@ -2928,6 +3058,24 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                 })
               ]
             }),
+          jsxs('div', {
+            className: 'flex items-center justify-between gap-2 pb-1',
+            children: [
+              jsx('span', {
+                className: 'text-[0.625rem] text-(--ui-text-tertiary)',
+                children: '界面明暗'
+              }),
+              jsx(Segmented, {
+                options: [
+                  ['system', '跟随系统'],
+                  ['light', '亮色'],
+                  ['dark', '暗色']
+                ],
+                value: uiMode,
+                onChange: v => bumpUiMode(v)
+              })
+            ]
+          }),
           jsx(Tabs, {
             value: tab,
             onValueChange: setTab,
