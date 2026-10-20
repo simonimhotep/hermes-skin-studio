@@ -6,6 +6,8 @@ set -euo pipefail
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_NAME="skin-studio"
+# 优先 python3，回退 python（部分发行版 / macOS 只有其一）
+PYTHON="$(command -v python3 || command -v python || true)"
 
 echo "📦 皮肤工坊 (Skin Studio) 安装程序"
 echo "  源目录: $SRC_DIR"
@@ -22,7 +24,7 @@ cp "$SRC_DIR/dashboard/manifest.json" "$SRC_DIR/dashboard/plugin_api.py" "$HERME
 echo "✅ 后端插件 → $HERMES_HOME/plugins/$PLUGIN_NAME/dashboard/"
 
 # 3. 启用插件（写入 plugins.enabled，YAML 数组格式）
-python3 - "$HERMES_HOME/config.yaml" <<'PYEOF'
+"$PYTHON" - "$HERMES_HOME/config.yaml" <<'PYEOF'
 import os, sys
 
 path = sys.argv[1]
@@ -92,8 +94,9 @@ PYEOF
 
 echo ""
 echo "🎉 安装完成！接下来："
-echo "  1. 完全退出 Hermes Desktop（Cmd+Q）再重新打开"
-echo "  2. ⌘K → Reload desktop plugins"
+echo "  1. 完全退出 Hermes Desktop（macOS: Cmd+Q / Windows: 退出应用）再重新打开"
+echo "  2. 命令面板 → Reload desktop plugins"
 echo "  3. 侧边栏出现「皮肤工坊」→ 选主题 → 点「应用」"
 echo ""
-echo "有问题或建议：https://github.com/naiyou-dotcom/hermes-skin-studio"
+echo "Windows 用户请改用 .\\install.ps1（PowerShell）"
+echo "有问题或建议：https://github.com/simonimhotep/hermes-skin-studio"

@@ -18,7 +18,10 @@ import argparse
 import re
 from pathlib import Path
 
-import yaml
+try:
+    import yaml  # PyYAML（独立测试环境）
+except ImportError:  # hermes 环境无顶层 PyYAML，走内置 ruamel 封装
+    import hermes_yaml as yaml
 from fastapi import APIRouter
 
 from hermes_constants import get_hermes_home

@@ -89,15 +89,33 @@
 
 ### 一键安装（推荐）
 
+**Windows（PowerShell）：**
+
+```powershell
+git clone https://github.com/simonimhotep/hermes-skin-studio.git
+cd hermes-skin-studio
+.\install.ps1
+```
+
+脚本自动定位 Hermes 家目录（`$HERMES_HOME` → 常见盘符的 `Hermes\` → `%LOCALAPPDATA%\hermes`），
+完成：前端 → `<家目录>/desktop-plugins/`、后端 → `<家目录>/plugins/`、
+启用配置 → `plugins.enabled`。之后**完全退出并重新打开 Hermes Desktop**，
+命令面板（Windows: Ctrl+K）→ Reload desktop plugins 即可。
+
+**macOS / Linux：**
+
 ```bash
-git clone https://github.com/naiyou-dotcom/hermes-skin-studio.git
+git clone https://github.com/simonimhotep/hermes-skin-studio.git
 cd hermes-skin-studio
 ./install.sh
 ```
 
 脚本自动完成：前端 → `~/.hermes/desktop-plugins/`、后端 → `~/.hermes/plugins/`、
 启用配置 → `plugins.enabled`。之后**重启 Hermes Desktop**（Cmd+Q 再打开），
-⌘K → Reload desktop plugins 即可。
+命令面板（⌘K）→ Reload desktop plugins 即可。
+
+> 手动指定家目录：`.\install.ps1 -HermesHome "E:\Hermes"`（Windows）或
+> `HERMES_HOME=~/custom ./install.sh`（macOS/Linux）。
 
 ### 手动安装
 
@@ -108,7 +126,7 @@ mkdir -p ~/.hermes/desktop-plugins
 cp -R skin-studio ~/.hermes/desktop-plugins/
 ```
 
-（命名 profile：`~/.hermes/profiles/<名称>/desktop-plugins/`）
+（Windows 下把 `~/.hermes` 换成你的家目录，例如 `E:\Hermes` 或 `%LOCALAPPDATA%\hermes`。）
 
 #### 2. Python 后端（推荐——启用「应用」按钮）
 
@@ -117,7 +135,7 @@ mkdir -p ~/.hermes/plugins
 cp -R skin-studio ~/.hermes/plugins/       # 使用 dashboard/manifest.json + plugin_api.py
 ```
 
-启用插件（`plugins.enabled` 必须是 **YAML 数组**格式，编辑 `~/.hermes/config.yaml`）：
+启用插件（`plugins.enabled` 必须是 **YAML 数组**格式，编辑 `<家目录>/config.yaml`）：
 
 ```yaml
 plugins:
@@ -128,12 +146,12 @@ plugins:
 然后重启 gateway（`hermes gateway restart` 或重启 Hermes Desktop）。
 
 > 后端挂载 `POST /api/plugins/skin-studio/activate`——把主题写成真正的 Hermes 皮肤
-> （`~/.hermes/skins/<名称>.yaml`）并在约 1 秒内激活到**所有界面**（CLI、TUI、桌面）。
-> 不装后端也能用：⌘K → 主题 手动激活（皮肤工坊的主题会出现在主题网格里）。
+> （`<家目录>/skins/<名称>.yaml`）并在约 1 秒内激活到**所有界面**（CLI、TUI、桌面）。
+> 不装后端也能用：命令面板 → 主题 手动激活（皮肤工坊的主题会出现在主题网格里）。
 
 ## 使用
 
-1. **激活主题**：⌘K → 主题 → 选择皮肤工坊主题（或面板内编辑自定义主题后点「应用」持久化）
+1. **激活主题**：命令面板 → 主题 → 选择皮肤工坊主题（或面板内编辑自定义主题后点「应用」持久化）
 2. **实时编辑**：侧边栏打开「皮肤工坊」面板——背景（图片/视频/遮罩/模糊）、颜色（取色/模板/微调）、文字（加粗/字体/字号/强调色）
 3. **重启保留**：应用过的主题写入 `display.skin`，启动自动恢复；壁纸/视频分别存 localStorage/IndexedDB
 

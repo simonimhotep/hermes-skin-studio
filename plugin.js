@@ -2320,7 +2320,7 @@ async function activateSkin(theme) {
   } catch (e) {
     host.notify({
       kind: 'error',
-      message: '应用失败。请手动激活：⌘K → 主题 → ' + theme.label + '. (' + (e && e.message ? e.message : String(e)) + ')'
+      message: '应用失败。请手动激活：命令面板 → 主题 → ' + theme.label + '. (' + (e && e.message ? e.message : String(e)) + ')'
     })
     return null
   }
@@ -2967,7 +2967,7 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
         inactiveWarned.current = true
         host.notify({
           kind: 'info',
-          message: '更改已保存到皮肤工坊——激活主题查看：⌘K → 主题 → 皮肤工坊 · 自定义'
+          message: '更改已保存到皮肤工坊——激活主题查看：命令面板 → 主题 → 皮肤工坊 · 自定义'
         })
       }
     }, 180)
@@ -3054,7 +3054,7 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                 jsx('p', {
                   className: 'text-[0.625rem]',
                   children:
-                    '所有编辑都会自动保存。要查看效果：⌘K → 主题 → 选择「皮肤工坊 · 自定义」。'
+                    '所有编辑都会自动保存。要查看效果：命令面板 → 主题 → 选择「皮肤工坊 · 自定义」。'
                 })
               ]
             }),
@@ -3278,7 +3278,7 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                           jsx('p', {
                             className: 'text-[0.625rem] leading-relaxed text-(--ui-text-quaternary)',
                             children:
-                              '设置视频后优先于图片。静音循环播放，应用不可见时暂停，并遵循 macOS 的「减弱动态效果」。'
+                              '设置视频后优先于图片。静音循环播放，应用不可见时暂停，并遵循系统的「减少动画」设置。'
                           }),
                           jsxs('div', {
                             className: 'flex items-center gap-2',
