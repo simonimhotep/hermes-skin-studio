@@ -1032,6 +1032,9 @@ const STORAGE_IMG_KEY = 'ss-custom-img-v1'
 // 本地视频改存 IndexedDB（容量可达 GB 级，不再受 localStorage 3.5MB 限制）。
 // 主题 JSON 里只存 videoId 标记，启动时从 IDB 读回 blob → objectURL。
 const STORAGE_VIDEO_ID_KEY = 'ss-video-id'
+// 本地图片同样改存 IndexedDB（镜像视频机制）：主题 JSON 里只存 imageId 标记，
+// 启动时从 IDB 读回 blob → objectURL。不再受 localStorage 配额 / 2.5MB 限制。
+const STORAGE_IMAGE_ID_KEY = 'ss-image-id'
 // 视频媒体库：IndexedDB 存视频本体，localStorage 只存元数据列表
 //（[{id, name, size, date}]），最多保留 VIDEO_LIB_MAX 个，超出自动清理最旧。
 const STORAGE_VIDEO_LIB_KEY = 'ss-video-lib'
@@ -1272,6 +1275,12 @@ function loadCustom() {
       if (typeof forge.backgroundVideo === 'string' && forge.backgroundVideo.startsWith('blob:')) {
         if (!forge.localVideoId) forge.backgroundVideo = null
       }
+      // blob: 图片 URL 同样会随会话失效。有 localImageId 标记的由
+      // restoreLocalImage() 异步从 IndexedDB 读回（这里先清空）；无标记的
+      // 旧 blob 是死引用，直接清。
+      if (typeof forge.backgroundImage === 'string' && forge.backgroundImage.startsWith('blob:')) {
+        if (!forge.localImageId) forge.backgroundImage = null
+      }
       // Wallpaper data URI from its dedicated key (large images live there so
       // they can't block the theme save). Older saves carry the data URI
       // inline in forge.backgroundImage — migrate it to the dedicated key.
@@ -1339,6 +1348,32 @@ async function restoreLocalVideo() {
   }
 }
 
+// 启动时从 IndexedDB 恢复本地背景图片（镜像 restoreLocalVideo）。
+// blob URL 随会话失效，这里读回 blob → objectURL，让壁纸重启后依然保留。
+async function restoreLocalImage() {
+  try {
+    const imgId = storage?.get(STORAGE_IMAGE_ID_KEY, null)
+    if (!imgId || !customTheme) return
+    const blob = await idbGet(imgId)
+    if (blob) {
+      const url = URL.createObjectURL(blob)
+      customTheme.forge.backgroundImage = url
+      customTheme.forge.localImageId = imgId
+      publishCustom()
+    } else {
+      // IDB 记录丢失（数据库被清）——清理标记，避免死引用。
+      storage?.remove(STORAGE_IMAGE_ID_KEY)
+      if (customTheme.forge.localImageId) {
+        customTheme.forge.localImageId = null
+        customTheme.forge.backgroundImage = null
+        publishCustom()
+      }
+    }
+  } catch {
+    // 静默失败：主题本身仍可用，只是图片回到未设置状态。
+  }
+}
+
 function saveCustom() {
   // Split the payload: the theme (colors, blur, overlay, text) saves ALWAYS —
   // a big wallpaper data URI must never be able to roll back slider tweaks.
@@ -1348,14 +1383,15 @@ function saveCustom() {
   const forge = customTheme.forge || {}
   const inlineImg = forge.backgroundImage
   const isData = typeof inlineImg === 'string' && inlineImg.startsWith('data:')
+  const isBlobImage = typeof inlineImg === 'string' && inlineImg.startsWith('blob:')
   const isBlobVideo =
     typeof forge.backgroundVideo === 'string' && forge.backgroundVideo.startsWith('blob:')
-  const themeForSave = isData || isBlobVideo
+  const themeForSave = isData || isBlobImage || isBlobVideo
     ? {
         ...customTheme,
         forge: {
           ...forge,
-          backgroundImage: isData ? null : forge.backgroundImage,
+          backgroundImage: isData || isBlobImage ? null : forge.backgroundImage,
           backgroundVideo: isBlobVideo ? null : forge.backgroundVideo
         }
       }
@@ -2549,6 +2585,9 @@ export default {
     // 从 IndexedDB 异步恢复本地视频（大视频持久化）。
     restoreLocalVideo()
 
+    // 同样恢复本地背景图片（大图片持久化）。
+    restoreLocalImage()
+
     // Persistence across restarts/updates: if the backend config still points
     // at a forge skin, re-assert it (re-writing display.skin bumps the config
     // mtime → the gateway watcher re-broadcasts skin.changed → the desktop
@@ -2735,26 +2774,35 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
   // gives us the real File, so no backend/bridge is needed.
   function pickLocalImage(file) {
     if (!file) return
-    const MAX = 2.5 * 1024 * 1024
-    if (file.size > MAX) {
-      host.notify({
-        kind: 'error',
-        message: '图片过大（>2.5MB）。请用更小的图片或粘贴 URL——大图无法存入应用存储。'
-      })
+    const type = String(file.type || '')
+    if (type && !type.startsWith('image/')) {
+      host.notify({ kind: 'error', message: '格式不支持——请选择图片文件（jpg、png、webp…）。' })
       return
     }
-    const reader = new FileReader()
-    reader.onload = () => {
-      setLocalFile({ name: file.name, size: file.size })
-      bumpExtras({ backgroundImage: reader.result })
-    }
-    reader.onerror = () => host.notify({ kind: 'error', message: '读取图片文件失败。' })
-    reader.readAsDataURL(file)
+    // 图片改存 IndexedDB（镜像视频机制）：blob URL 即时预览，File 本体写 IDB，
+    // 重启后 restoreLocalImage() 读回。不再受 localStorage 配额 / 2.5MB 限制。
+    const objUrl = URL.createObjectURL(file)
+    const imageId = 'img-' + Date.now()
+    setLocalFile({ name: file.name, size: file.size })
+    bumpExtras({ backgroundImage: objUrl, localImageId: imageId })
+    ensurePersistentStorage()
+      .then(() => idbPut(imageId, file))
+      .then(() => {
+        storage?.set(STORAGE_IMAGE_ID_KEY, imageId)
+        host.notify({ kind: 'info', message: `背景图片已保存（${fmtSize(file.size)}，重启后依然保留）` })
+      })
+      .catch(() => {
+        host.notify({ kind: 'error', message: '背景图片保存失败（存储空间不足）——本次可用，但重启后会丢失。' })
+      })
   }
 
   function clearLocalFile() {
     setLocalFile(null)
-    bumpExtras({ backgroundImage: null })
+    // 清理 IndexedDB 里的图片本体 + localStorage 标记，避免孤儿数据。
+    const oldId = customTheme?.forge?.localImageId || storage?.get(STORAGE_IMAGE_ID_KEY, null)
+    bumpExtras({ backgroundImage: null, localImageId: null })
+    storage?.remove(STORAGE_IMAGE_ID_KEY)
+    if (oldId) idbDel(oldId).catch(() => {})
   }
 
   // Local video picker. 视频存 IndexedDB（容量大，不再受 localStorage 限制）：
