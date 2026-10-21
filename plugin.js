@@ -2305,6 +2305,13 @@ function drawCyber(now) {
     cyberRaf = null
     return
   }
+  // 帧率上限 30fps：极光/流线本身移动很慢，30fps 与 60fps 视觉无差，
+  // 但 canvas 绘制次数减半、CPU 明显下降。cyberT 仍按真实时间推进，
+  // 所以速度参数的手感不受影响。
+  if (cyberLast && now - cyberLast < 32) {
+    cyberRaf = requestAnimationFrame(drawCyber)
+    return
+  }
   const w = window.innerWidth
   const h = window.innerHeight
   // 窗口尺寸 / DPR 变了 → 重建画布（含流线），避免拉伸模糊。
@@ -2377,7 +2384,8 @@ function drawCyber(now) {
   for (const s of cyberStreaks) {
     const head = ((cyberT * s.speed + s.phase) % 1.4) - 0.2
     const [r, g, b] = s.col
-    const steps = 24
+    // 16 段（原 24）——视觉几乎无差，stroke 次数少三分之一。
+    const steps = 16
     for (let k = 0; k < steps; k++) {
       const u0 = head - s.len * (k / steps)
       const u1 = head - s.len * ((k + 1) / steps)
