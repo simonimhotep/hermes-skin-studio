@@ -1243,7 +1243,7 @@ async function storageEstimate() {
   }
 }
 
-const PRESETS = [forgeCyber, forgeGlass, forgePaper, forgeMatrix, forgeHacker, ssInk, ssQinghua, ssGugong, ssBamboo, ssDunhuang, ssHanziRain, ssEva, ssGundam, ssMiku, ssKimetsu]
+const PRESETS = [forgeCyber, forgeGlass, forgePaper, forgeHacker, ssInk, ssQinghua, ssGugong, ssBamboo, ssDunhuang, ssEva, ssGundam, ssMiku, ssKimetsu]
 const CUSTOM_NAME = 'ss-custom'
 
 let storage = null // injected from register(ctx)
@@ -1791,7 +1791,8 @@ function attachVideoLifecycle(video) {
 }
 
 function paintMedia(theme) {
-  const f = theme.forge || {}
+  // 用 resolveFx 解析：背景是全局壁纸，当前主题没设时回退到自定义主题。
+  const f = resolveFx(theme)
   const video = f.backgroundVideo || ''
   const img = video ? '' : f.backgroundImage || ''
   const fit = f.imageFit === 'contain' ? 'contain' : 'cover'
@@ -2032,7 +2033,18 @@ const UI_MODE_CHANGED_EVENT = 'skin-studio:ui-mode-changed'
 function resolveFx(theme) {
   const f = theme?.forge || {}
   const g = fxGlobal || {}
-  const out = { ...f }
+  // 背景（壁纸/视频 + 遮罩/模糊/填充）是「全局壁纸」：换任何配色主题都应
+  // 保留。当前主题没设背景时，回退到自定义主题（ss-custom）的背景设置——
+  // 否则只有 ss-custom 下能看到背景图，切到青花瓷等预设主题就丢了。
+  const fb = (customTheme && customTheme.forge) || {}
+  const out = {
+    ...f,
+    backgroundImage: f.backgroundImage || fb.backgroundImage || null,
+    backgroundVideo: f.backgroundVideo || fb.backgroundVideo || null,
+    overlayOpacity: f.overlayOpacity != null ? f.overlayOpacity : fb.overlayOpacity,
+    blur: f.blur != null ? f.blur : fb.blur,
+    imageFit: f.imageFit || fb.imageFit
+  }
   if (g.mode === 'matrix') {
     out.matrixRain = true
     out.hanziRain = false
