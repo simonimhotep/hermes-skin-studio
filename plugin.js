@@ -1365,8 +1365,10 @@ async function restoreLocalImage() {
     const imgId = storage?.get(STORAGE_IMAGE_ID_KEY, null)
     if (!imgId || !customTheme) return
     const blob = await idbGet(imgId)
-    // 竞态保护：恢复期间用户已换图（customTheme 的 localImageId 已变），不覆盖。
-    if (customTheme.forge.localImageId && customTheme.forge.localImageId !== imgId) return
+    // 竞态保护：读取期间用户移除（持久化标记被清）或换图（标记变了），都不覆盖。
+    // 用持久化标记判断而不是 customTheme.forge.localImageId——用户移除图片后
+    // 后者是 null，原来的判断会放过它，导致旧图被恢复回来。
+    if (storage?.get(STORAGE_IMAGE_ID_KEY, null) !== imgId) return
     if (blob) {
       const url = URL.createObjectURL(blob)
       customTheme.forge.backgroundImage = url
@@ -2037,13 +2039,19 @@ function resolveFx(theme) {
   // 保留。当前主题没设背景时，回退到自定义主题（ss-custom）的背景设置——
   // 否则只有 ss-custom 下能看到背景图，切到青花瓷等预设主题就丢了。
   const fb = (customTheme && customTheme.forge) || {}
+  // 背景来源判定：当前主题自己没设背景、回退到自定义主题的壁纸时，
+  // 遮罩/模糊/填充也必须跟着自定义主题走。否则各预设自带的 overlayOpacity
+  // （如 0.25）会覆盖用户对壁纸的调节，切主题就变样。
+  const usingCustomBackdrop =
+    !f.backgroundImage && !f.backgroundVideo && Boolean(fb.backgroundImage || fb.backgroundVideo)
+  const bd = usingCustomBackdrop ? fb : f
   const out = {
     ...f,
     backgroundImage: f.backgroundImage || fb.backgroundImage || null,
     backgroundVideo: f.backgroundVideo || fb.backgroundVideo || null,
-    overlayOpacity: f.overlayOpacity != null ? f.overlayOpacity : fb.overlayOpacity,
-    blur: f.blur != null ? f.blur : fb.blur,
-    imageFit: f.imageFit || fb.imageFit
+    overlayOpacity: bd.overlayOpacity,
+    blur: bd.blur,
+    imageFit: bd.imageFit || 'cover'
   }
   if (g.mode === 'matrix') {
     out.matrixRain = true
@@ -2380,6 +2388,15 @@ async function activateSkin(theme) {
         colors: skinTokensFromTheme(theme)
       }
     })
+    // 后端写皮肤文件/写 config 失败时返回 {ok:false, error}——必须拦住，
+    // 否则界面提示"已应用"但配置没保存，重启后恢复旧主题。
+    if (!res || res.ok === false) {
+      host.notify({
+        kind: 'error',
+        message: `"${theme.label}" 应用失败：${(res && res.error) || '后端未确认写入'}。请检查后重试。`
+      })
+      return res
+    }
     // 同时设置桌面端当前主题（data-hermes-theme），让 applyForge 的 CSS 注入
     // 引擎（背景图片/壁纸/动画）生效——否则只写后端 display.skin，桌面端当前
     // 主题不变，背景图等扩展功能不会重绘。
