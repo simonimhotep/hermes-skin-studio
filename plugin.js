@@ -2234,32 +2234,34 @@ function addScanlines() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 赛博朋克 · 霓虹光柱（Neon Beams）
+// 赛博朋克 · 霓虹极光（Cyber Aurora）
 //
-// 稀疏的垂直霓虹光柱：每条是一道细长的渐变光带，横向缓慢漂移 + 呼吸明灭。
-// 用 DOM 元素实现（不是 canvas）——canvas 的拖尾要每帧填一层底色，叠在壁纸
-// 之上会把背景图整个盖住；DOM 天然透明，光柱之外完全透出壁纸。
-// 数量（1–60，默认 8）与速度（0.05–2，默认 0.15）都可调——刻意默认少而慢，
-// 不像数字墙那样满屏铺满，避免抢走正文注意力。
-// 颜色固定霓虹系（青/品红/紫/绿/金），不跟主题 accent：主题色可能是暖白或
-// 浅色，会让「赛博」感消失（与汉字雨固定宣纸色同理）。
+// 三层叠加：极光带（正弦波缓慢漂移）+ 透视网格（地平线）+ 流线（划过光迹）。
+// 参考 Claude 设计的 aurora.html，但做了一处关键改造：用 clearRect 清屏，
+// 而不是每帧填不透明底色——原版的 `fillStyle='#07060f'; fillRect()` 叠在
+// 壁纸之上会把背景图完全盖住（canvas 全屏填充的经典坑），本插件必须保持
+// 透明，壁纸才能透出来。
+// 数量（1–60，默认 10）控制流线条数，速度（0.05–2，默认 0.15）控制整体节奏。
+// 颜色固定霓虹系（青/紫/品红），不跟主题 accent：浅色主题会让赛博感消失。
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CYBER_COLORS = ['#00E5FF', '#FF2E88', '#B026FF', '#00E56A', '#FFC400']
-let cyberLayer = null
-let cyberBeams = []
+const CYBER_COLORS = [[0, 255, 220], [120, 90, 255], [255, 60, 200]]
+let cyberCanvas = null
+let cyberCtx = null
 let cyberRaf = null
 let cyberLast = 0
+let cyberT = 0
+let cyberStreaks = []
 
 function cyberThemeForge() {
   const activeName = document.documentElement.dataset.hermesTheme
   return activeName ? resolveFx(themeMap.get(activeName)) : null
 }
 
-/** 元素数量：复用 rainFontSize 滑块（cyber 模式下它表示「元素个数」）。 */
+/** 流线条数：复用 rainFontSize 滑块（cyber 模式下它表示「元素个数」）。 */
 function cyberCountOf(forge) {
   const n = Number(forge?.rainFontSize)
-  return Math.max(1, Math.min(60, Math.round(Number.isFinite(n) && n > 0 ? n : 8)))
+  return Math.max(1, Math.min(60, Math.round(Number.isFinite(n) && n > 0 ? n : 10)))
 }
 
 /** 速度：复用 rainSpeed（下限 0.05）。 */
@@ -2268,66 +2270,129 @@ function cyberSpeedOf(forge) {
   return Math.max(0.05, Math.min(3, Number.isFinite(s) && s > 0 ? s : 0.15))
 }
 
-/** 重建光柱：数量变化 / 窗口尺寸变化时调用。 */
+/** 重建画布与流线：数量变化 / 窗口尺寸变化时调用（含 DPR 高清适配）。 */
 function seedCyber() {
-  if (!cyberLayer) return
-  cyberLayer.innerHTML = ''
-  const count = cyberCountOf(cyberThemeForge())
+  if (!cyberCanvas || !cyberCtx) return
+  const dpr = window.devicePixelRatio || 1
   const w = window.innerWidth
-  cyberBeams = []
-  for (let i = 0; i < count; i++) {
-    const color = CYBER_COLORS[i % CYBER_COLORS.length]
-    const width = 1 + Math.random() * 3
-    const el = document.createElement('div')
-    // 垂直渐变：两端透明、中间实色 → 一道柔和光柱。元素本身没有底色，
-    // 光柱之外完全透出背景图（这正是 canvas 拖尾做不到的）。
-    el.style.cssText =
-      'position:absolute;top:0;bottom:0;pointer-events:none;will-change:transform,opacity;' +
-      `width:${width}px;filter:blur(${width > 2.5 ? 2 : 1}px);opacity:0;` +
-      `background:linear-gradient(to bottom, transparent 0%, ${color} 35%, ${color} 65%, transparent 100%);`
-    cyberLayer.appendChild(el)
-    cyberBeams.push({
-      el,
-      x: Math.random() * w,
-      vx: (Math.random() - 0.5) * 0.5, // 横向漂移（再乘 speed）
-      phase: Math.random() * Math.PI * 2
-    })
-  }
+  const h = window.innerHeight
+  cyberCanvas.width = Math.max(1, Math.round(w * dpr))
+  cyberCanvas.height = Math.max(1, Math.round(h * dpr))
+  cyberCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  const count = cyberCountOf(cyberThemeForge())
+  cyberStreaks = Array.from({ length: count }, (_, i) => ({
+    y0: 0.35 + Math.random() * 0.4,
+    amp: 0.05 + Math.random() * 0.1,
+    freq: 1.5 + Math.random() * 3,
+    speed: 0.08 + Math.random() * 0.12,
+    phase: Math.random() * 10,
+    len: 0.12 + Math.random() * 0.2,
+    col: CYBER_COLORS[i % CYBER_COLORS.length]
+  }))
 }
 
 function drawCyber(now) {
-  if (!cyberLayer) return
-  const forge = cyberThemeForge()
-  const speed = cyberSpeedOf(forge)
-  // 数量变了（用户拖滑块）→ 重建光柱
-  if (cyberBeams.length !== cyberCountOf(forge)) {
+  const x = cyberCtx
+  if (!x || !cyberCanvas) return
+  const w = window.innerWidth
+  const h = window.innerHeight
+  // 窗口尺寸 / DPR 变了 → 重建画布（含流线），避免拉伸模糊。
+  const dpr = window.devicePixelRatio || 1
+  if (cyberCanvas.width !== Math.round(w * dpr) || cyberCanvas.height !== Math.round(h * dpr)) {
     seedCyber()
   }
+  const speed = cyberSpeedOf(cyberThemeForge())
   const dt = Math.min(64, Math.max(0, now - (cyberLast || now)))
   cyberLast = now
-  const w = window.innerWidth
-  for (const b of cyberBeams) {
-    // 横向缓慢漂移 + 环绕
-    b.x += b.vx * speed * dt * 0.05
-    if (b.x < -12) b.x = w + 12
-    if (b.x > w + 12) b.x = -12
-    // 呼吸：透明度在 0.12–0.62 之间缓慢起伏
-    b.phase += 0.0006 * dt * (0.5 + speed)
-    const pulse = 0.12 + 0.5 * (0.5 + 0.5 * Math.sin(b.phase))
-    b.el.style.transform = `translateX(${b.x}px)`
-    b.el.style.opacity = pulse.toFixed(3)
+  cyberT += dt * 0.001 * speed
+
+  // 数量变了（用户拖滑块）→ 重建流线
+  if (cyberStreaks.length !== cyberCountOf(cyberThemeForge())) seedCyber()
+
+  // 关键：透明清屏，不填底色——壁纸才能透出来（原版 aurora.html 填
+  // '#07060f' 会把背景图完全盖住）。
+  x.clearRect(0, 0, w, h)
+
+  // ── 极光带：3 条正弦波，低 alpha 叠加提亮 ──
+  x.globalCompositeOperation = 'lighter'
+  for (let i = 0; i < 3; i++) {
+    const [r, g, b] = CYBER_COLORS[i]
+    const grad = x.createLinearGradient(0, 0, 0, h * 0.8)
+    grad.addColorStop(0, `rgba(${r},${g},${b},0)`)
+    grad.addColorStop(0.5, `rgba(${r},${g},${b},0.09)`)
+    grad.addColorStop(1, 'rgba(0,0,0,0)')
+    x.fillStyle = grad
+    x.beginPath()
+    x.moveTo(0, h)
+    for (let px = 0; px <= w; px += 6) {
+      const y =
+        h * (0.22 + 0.1 * i) +
+        Math.sin(px * 0.008 + cyberT * 0.6 + i * 1.7) * h * 0.08 +
+        Math.sin(px * 0.021 - cyberT * 0.9 + i) * h * 0.04
+      x.lineTo(px, y)
+    }
+    x.lineTo(w, h)
+    x.closePath()
+    x.fill()
   }
+
+  // ── 透视网格：地平线以下，低 alpha 细线 ──
+  const horizon = h * 0.7
+  const vx = w / 2
+  x.strokeStyle = 'rgba(0,255,220,0.10)'
+  x.lineWidth = 0.6
+  const N = 14
+  for (let k = 0; k < N; k++) {
+    const f = Math.pow((k + ((cyberT * 0.25) % 1)) / N, 2)
+    const y = horizon + (h - horizon) * f
+    x.beginPath(); x.moveTo(0, y); x.lineTo(w, y); x.stroke()
+  }
+  for (let i = -10; i <= 10; i++) {
+    x.beginPath()
+    x.moveTo(vx, horizon)
+    x.lineTo(vx + i * w * 0.12, h)
+    x.stroke()
+  }
+  // 地平线光晕（品红）：压到 0.18，原版 0.55 太抢眼
+  const hg = x.createLinearGradient(0, horizon - 2, 0, horizon + 6)
+  hg.addColorStop(0, 'rgba(255,60,200,0)')
+  hg.addColorStop(0.5, 'rgba(255,60,200,0.18)')
+  hg.addColorStop(1, 'rgba(255,60,200,0)')
+  x.fillStyle = hg
+  x.fillRect(0, horizon - 2, w, 8)
+
+  // ── 流线：沿正弦路径划过，尾迹渐隐 ──
+  x.lineCap = 'round'
+  for (const s of cyberStreaks) {
+    const head = ((cyberT * s.speed + s.phase) % 1.4) - 0.2
+    const [r, g, b] = s.col
+    const steps = 24
+    for (let k = 0; k < steps; k++) {
+      const u0 = head - s.len * (k / steps)
+      const u1 = head - s.len * ((k + 1) / steps)
+      const a = (1 - k / steps) * 0.42
+      x.strokeStyle = `rgba(${r},${g},${b},${a})`
+      x.lineWidth = 1.4 * (1 - k / steps) + 0.35
+      x.beginPath()
+      x.moveTo(u0 * w, (s.y0 + Math.sin(u0 * s.freq + cyberT * 0.5 + s.phase) * s.amp) * h)
+      x.lineTo(u1 * w, (s.y0 + Math.sin(u1 * s.freq + cyberT * 0.5 + s.phase) * s.amp) * h)
+      x.stroke()
+    }
+  }
+
+  x.globalCompositeOperation = 'source-over'
   cyberRaf = requestAnimationFrame(drawCyber)
 }
 
 function startCyberPulse() {
   const host = ensureFxContainer()
-  if (!cyberLayer) {
-    cyberLayer = document.createElement('div')
-    cyberLayer.className = 'ss-cyber'
-    cyberLayer.style.cssText =
-      `position:absolute;inset:0;z-index:${RAIN_Z};pointer-events:none;overflow:hidden;`
-    host.appendChild(cyberLayer)
+  if (!cyberCanvas) {
+    cyberCanvas = document.createElement('canvas')
+    cyberCanvas.className = 'ss-cyber'
+    cyberCanvas.style.cssText =
+      `position:absolute;inset:0;width:100%;height:100%;z-index:${RAIN_Z};pointer-events:none;`
+    host.appendChild(cyberCanvas)
+    cyberCtx = cyberCanvas.getContext('2d')
   }
   seedCyber()
   if (!cyberRaf) {
@@ -2341,15 +2406,17 @@ function stopCyberPulse() {
     cancelAnimationFrame(cyberRaf)
     cyberRaf = null
   }
-  if (cyberLayer) {
-    cyberLayer.remove()
-    cyberLayer = null
+  if (cyberCanvas) {
+    cyberCanvas.remove()
+    cyberCanvas = null
   }
-  cyberBeams = []
+  cyberCtx = null
+  cyberStreaks = []
+  cyberT = 0
 }
 
 function startFx(theme) {
-  // 用 resolveFx 合并全局特效层——全局覆盖（汉字雨/霓虹脉冲/关闭）优先于主题自带。
+  // 用 resolveFx 合并全局特效层——全局覆盖（汉字雨/霓虹极光/关闭）优先于主题自带。
   const f = resolveFx(theme)
   const wantsCyber = Boolean(f.cyberPulse)
   const wantsRain = Boolean(f.matrixRain || f.hanziRain)
@@ -2369,7 +2436,7 @@ function startFx(theme) {
       fxResizeObserver = null
     }
   }
-  // 离开 cyber 模式时停掉霓虹脉冲（避免残留 canvas 一直跑动画）。
+  // 离开 cyber 模式时停掉霓虹极光（避免残留 canvas 一直跑动画）。
   if (!wantsCyber) stopCyberPulse()
   // Overlay sits above the media (z-index 1), below rain/scanlines.
   if (f.overlayOpacity > 0) {
@@ -2387,7 +2454,7 @@ function startFx(theme) {
   }
   if (wantsCyber) startCyberPulse()
   else if (f.matrixRain || f.hanziRain) startMatrixRain()
-  // 扫描线与数字墙/霓虹脉冲互斥：满屏数字或流字符 + 满屏横线会叠成噪点/横纹
+  // 扫描线与数字墙/霓虹极光互斥：满屏数字或流字符 + 满屏横线会叠成噪点/横纹
   //（用户实测：「屏幕上好多横线」）。数字墙/cyber 激活时自动移除扫描线；
   // 汉字雨较稀疏可共存。
   // 注意必须「加」与「移」成对——之前只加不移，背景切换（视频↔图片）后
@@ -3734,7 +3801,7 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                       options: [
                         ['auto', '跟随主题'],
                         ['hanzi', '汉字雨'],
-                        ['cyber', '霓虹脉冲']
+                        ['cyber', '霓虹极光']
                       ],
                       value: fx.mode,
                       onChange: v => bumpFx({ mode: v })
