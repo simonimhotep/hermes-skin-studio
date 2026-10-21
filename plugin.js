@@ -2299,6 +2299,12 @@ function seedCyber() {
 function drawCyber(now) {
   const x = cyberCtx
   if (!x || !cyberCanvas) return
+  // 窗口不可见（最小化/切到后台）时暂停绘制，不空烧 CPU；可见时由
+  // visibilitychange 恢复（见 bindCyberVisibility）。
+  if (document.hidden) {
+    cyberRaf = null
+    return
+  }
   const w = window.innerWidth
   const h = window.innerHeight
   // 窗口尺寸 / DPR 变了 → 重建画布（含流线），避免拉伸模糊。
@@ -2389,6 +2395,19 @@ function drawCyber(now) {
   cyberRaf = requestAnimationFrame(drawCyber)
 }
 
+let cyberVisBound = false
+/** 窗口重新可见时恢复极光动画（drawCyber 在不可见时会自行暂停）。 */
+function bindCyberVisibility() {
+  if (cyberVisBound || typeof document === 'undefined') return
+  cyberVisBound = true
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && cyberCanvas && !cyberRaf) {
+      cyberLast = 0
+      cyberRaf = requestAnimationFrame(drawCyber)
+    }
+  })
+}
+
 function startCyberPulse() {
   const host = ensureFxContainer()
   if (!cyberCanvas) {
@@ -2402,6 +2421,7 @@ function startCyberPulse() {
     // 这里，若无条件 seed，拖动滑块会把所有流线的位置/颜色/相位重置。
     seedCyber()
   }
+  bindCyberVisibility()
   if (!cyberRaf) {
     cyberLast = 0
     cyberRaf = requestAnimationFrame(drawCyber)
@@ -3044,6 +3064,12 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
     // 重启后 restoreLocalImage() 读回。不再受 localStorage 配额 / 2.5MB 限制。
     const objUrl = URL.createObjectURL(file)
     const imageId = 'img-' + Date.now()
+    // 换图时清掉上一张的 blob：否则每次换图都会在 IndexedDB 里留一份孤儿
+    //（实测库里 14MB 中有 4 份重复的 1.6MB 旧图）。
+    const oldId =
+      (customTheme && customTheme.forge && customTheme.forge.localImageId) ||
+      storage?.get(STORAGE_IMAGE_ID_KEY, null)
+    if (oldId && oldId !== imageId) idbDel(oldId).catch(() => {})
     setLocalFile({ name: file.name, size: file.size })
     bumpExtras({ backgroundImage: objUrl, localImageId: imageId })
     // 背景图只有在当前主题是皮肤工坊主题时才会显示（applyForge 依赖
