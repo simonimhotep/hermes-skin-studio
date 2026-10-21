@@ -1070,7 +1070,7 @@ function loadFxGlobal() {
     const raw = storage?.get(STORAGE_FX_KEY, null)
     const o = raw ? JSON.parse(raw) : {}
     return {
-      mode: ['auto', 'none', 'matrix', 'hanzi'].includes(o.mode) ? o.mode : 'auto',
+      mode: ['auto', 'hanzi', 'cyber'].includes(o.mode) ? o.mode : 'auto',
       rainFontSize: Number(o.rainFontSize) || null,
       rainSpeed: Number(o.rainSpeed) || null,
       scanlines: ['on', 'off'].includes(o.scanlines) ? o.scanlines : 'auto'
@@ -1468,7 +1468,8 @@ function buildCss(theme) {
   const f = resolveFx(theme)
   const extra = f.extraColors || {}
   const hasMedia = Boolean(f.backgroundImage || f.backgroundVideo)
-  const fxOnly = Boolean(f.matrixRain || f.scanlines) && !hasMedia
+  // cyber 也是特效层：只跑 cyber 时玻璃同样要透明，否则不透明界面会盖住画布。
+  const fxOnly = Boolean(f.matrixRain || f.scanlines || f.cyberPulse) && !hasMedia
   const glassy = hasMedia || fxOnly
   const dark = (document.documentElement.dataset.hermesMode || 'dark') !== 'light'
   // With a wallpaper/video the backdrop must DOMINATE the default chrome —
@@ -2056,12 +2057,19 @@ function resolveFx(theme) {
   if (g.mode === 'matrix') {
     out.matrixRain = true
     out.hanziRain = false
+    out.cyberPulse = false
   } else if (g.mode === 'hanzi') {
     out.hanziRain = true
     out.matrixRain = false
+    out.cyberPulse = false
+  } else if (g.mode === 'cyber') {
+    out.cyberPulse = true
+    out.matrixRain = false
+    out.hanziRain = false
   } else if (g.mode === 'none') {
     out.matrixRain = false
     out.hanziRain = false
+    out.cyberPulse = false
   }
   if (g.rainFontSize) out.rainFontSize = g.rainFontSize
   if (g.rainSpeed) out.rainSpeed = g.rainSpeed
@@ -2079,8 +2087,9 @@ function rainThemeForge() {
 }
 function rainFontSizeOf(forge) {
   // 汉字雨默认 26px（大字清晰），数字墙保持原版 15px。
+  // 下限放到 1px：用户明确要能调到极小（仅保留极淡的纹理感）。
   const def = forge?.hanziRain ? 26 : RAIN_FONT_SIZE
-  return Math.max(12, Math.min(48, Number(forge?.rainFontSize) || def))
+  return Math.max(1, Math.min(60, Number(forge?.rainFontSize) || def))
 }
 function rainSpeedOf(forge) {
   // 汉字雨默认速度跟随背景：有背景图/视频时 0.5（动感），无背景图时 0.3
@@ -2090,7 +2099,7 @@ function rainSpeedOf(forge) {
       ? 0.5
       : 0.3
     : 1
-  return Math.max(0.15, Math.min(3, Number(forge?.rainSpeed) || def))
+  return Math.max(0.05, Math.min(3, Number(forge?.rainSpeed) || def))
 }
 
 let lastRainFontSize = null
@@ -2224,11 +2233,163 @@ function addScanlines() {
   host.appendChild(el)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 赛博朋克 · 霓虹脉冲（Neon Pulse）
+//
+// 稀疏的霓虹「数据流」：每条流是一小串字符，沿固定方向缓慢漂移 + 呼吸明灭，
+// 拖尾淡出让画面留光轨。元素数量（1–60，默认 8）与速度（0.05–2，默认 0.15）
+// 都可调——刻意默认少而慢，不像数字墙那样满屏铺满，避免抢走正文注意力。
+// 颜色固定霓虹系（青/品红/紫/绿/金），不跟主题 accent：主题色可能是暖白或
+// 浅色，会让「赛博」感消失（与汉字雨固定宣纸色同理）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CYBER_COLORS = ['#00E5FF', '#FF2E88', '#B026FF', '#00E56A', '#FFC400']
+const CYBER_GLYPHS = '01<>[]{}/\\|=+*#@%$&'
+let cyberCanvas = null
+let cyberCtx = null
+let cyberRaf = null
+let cyberNodes = []
+let cyberLast = 0
+
+function cyberThemeForge() {
+  const activeName = document.documentElement.dataset.hermesTheme
+  return activeName ? resolveFx(themeMap.get(activeName)) : null
+}
+
+/** 元素数量：复用 rainFontSize 滑块（cyber 模式下它表示「元素个数」）。 */
+function cyberCountOf(forge) {
+  const n = Number(forge?.rainFontSize)
+  return Math.max(1, Math.min(60, Math.round(Number.isFinite(n) && n > 0 ? n : 8)))
+}
+
+/** 速度：复用 rainSpeed（下限 0.05）。 */
+function cyberSpeedOf(forge) {
+  const s = Number(forge?.rainSpeed)
+  return Math.max(0.05, Math.min(3, Number.isFinite(s) && s > 0 ? s : 0.15))
+}
+
+function seedCyber(w, h) {
+  const count = cyberCountOf(cyberThemeForge())
+  const rand = (a, b) => a + Math.random() * (b - a)
+  cyberNodes = Array.from({ length: count }, () => {
+    const len = 2 + Math.floor(Math.random() * 3)
+    return {
+      x: Math.random() * w,
+      y: Math.random() * h,
+      angle: rand(0, Math.PI * 2),
+      base: rand(0.02, 0.06), // 每条流的基础漂移速度（再乘全局 speed）
+      len,
+      chars: Array.from({ length: len }, () => CYBER_GLYPHS[Math.floor(Math.random() * CYBER_GLYPHS.length)]),
+      color: CYBER_COLORS[Math.floor(Math.random() * CYBER_COLORS.length)],
+      phase: Math.random() * Math.PI * 2,
+      size: Math.round(rand(9, 14))
+    }
+  })
+}
+
+function resizeCyber() {
+  if (!cyberCanvas) return
+  cyberCanvas.width = window.innerWidth
+  cyberCanvas.height = window.innerHeight
+  seedCyber(cyberCanvas.width, cyberCanvas.height)
+}
+
+function drawCyber(now) {
+  if (!cyberCtx || !cyberCanvas) return
+  // 窗口尺寸变了 → 重新适配（避免拉伸/裁剪）。
+  if (cyberCanvas.width !== window.innerWidth || cyberCanvas.height !== window.innerHeight) {
+    resizeCyber()
+  }
+  const ctx = cyberCtx
+  const w = cyberCanvas.width
+  const h = cyberCanvas.height
+  const forge = cyberThemeForge()
+  const speed = cyberSpeedOf(forge)
+  const dt = Math.min(64, Math.max(0, now - (cyberLast || now)))
+  cyberLast = now
+
+  // 拖尾淡出：每帧盖一层半透明底色，留下淡淡光轨（赛博感来源之一）。
+  ctx.fillStyle = 'rgba(0,0,0,0.14)'
+  ctx.fillRect(0, 0, w, h)
+
+  for (const n of cyberNodes) {
+    const step = n.base * speed * dt * 0.09
+    n.x += Math.cos(n.angle) * step
+    n.y += Math.sin(n.angle) * step
+    // 环绕边缘
+    if (n.x < -60) n.x = w + 60
+    if (n.x > w + 60) n.x = -60
+    if (n.y < -60) n.y = h + 60
+    if (n.y > h + 60) n.y = -60
+
+    // 呼吸（明灭）
+    n.phase += 0.0008 * dt * (0.5 + speed)
+    const pulse = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(n.phase))
+
+    ctx.save()
+    ctx.font = `${n.size}px "JetBrains Mono", ui-monospace, monospace`
+    ctx.textBaseline = 'middle'
+    ctx.shadowBlur = n.size * 1.3
+    ctx.shadowColor = n.color
+    for (let i = 0; i < n.chars.length; i++) {
+      // 尾部渐隐：头亮尾淡
+      const a = pulse * (1 - i / (n.chars.length + 0.5))
+      if (a <= 0.02) continue
+      ctx.globalAlpha = a
+      ctx.fillStyle = i === 0 ? '#FFFFFF' : n.color
+      const ox = Math.cos(n.angle) * i * n.size * 0.85
+      const oy = Math.sin(n.angle) * i * n.size * 0.85
+      ctx.fillText(n.chars[i], n.x + ox, n.y + oy)
+    }
+    ctx.restore()
+
+    // 缓慢刷新字符——低速下几乎不闪，只保留「数据在变」的感觉。
+    if (Math.random() < 0.0008 * (0.5 + speed) * dt) {
+      const i = Math.floor(Math.random() * n.chars.length)
+      n.chars[i] = CYBER_GLYPHS[Math.floor(Math.random() * CYBER_GLYPHS.length)]
+    }
+  }
+
+  cyberRaf = requestAnimationFrame(drawCyber)
+}
+
+function startCyberPulse() {
+  const host = ensureFxContainer()
+  if (!cyberCanvas) {
+    cyberCanvas = document.createElement('canvas')
+    cyberCanvas.className = 'ss-cyber'
+    cyberCanvas.style.cssText =
+      `position:absolute;inset:0;width:100%;height:100%;z-index:${RAIN_Z};pointer-events:none;`
+    host.appendChild(cyberCanvas)
+    cyberCtx = cyberCanvas.getContext('2d')
+  }
+  resizeCyber()
+  if (!cyberRaf) {
+    cyberLast = 0
+    cyberRaf = requestAnimationFrame(drawCyber)
+  }
+}
+
+function stopCyberPulse() {
+  if (cyberRaf) {
+    cancelAnimationFrame(cyberRaf)
+    cyberRaf = null
+  }
+  if (cyberCanvas) {
+    cyberCanvas.remove()
+    cyberCanvas = null
+  }
+  cyberCtx = null
+  cyberNodes = []
+}
+
 function startFx(theme) {
-  // 用 resolveFx 合并全局特效层——全局覆盖（数字墙/汉字雨/关闭）优先于主题自带。
+  // 用 resolveFx 合并全局特效层——全局覆盖（汉字雨/霓虹脉冲/关闭）优先于主题自带。
   const f = resolveFx(theme)
+  const wantsCyber = Boolean(f.cyberPulse)
   const wantsRain = Boolean(f.matrixRain || f.hanziRain)
-  if (!wantsRain && rainRaf) {
+  // 特效互斥：cyber 与雨只留一个（cyber 优先，用户显式选了它）。
+  if ((!wantsRain || wantsCyber) && rainRaf) {
     // 切到无雨主题：停掉正在运行的雨（否则雨会一直下）。
     cancelAnimationFrame(rainRaf)
     rainRaf = null
@@ -2243,6 +2404,8 @@ function startFx(theme) {
       fxResizeObserver = null
     }
   }
+  // 离开 cyber 模式时停掉霓虹脉冲（避免残留 canvas 一直跑动画）。
+  if (!wantsCyber) stopCyberPulse()
   // Overlay sits above the media (z-index 1), below rain/scanlines.
   if (f.overlayOpacity > 0) {
     const host = ensureFxContainer()
@@ -2257,12 +2420,14 @@ function startFx(theme) {
     overlayEl.remove()
     overlayEl = null
   }
-  if (f.matrixRain || f.hanziRain) startMatrixRain()
-  // 扫描线与数字墙互斥：满屏数字 + 满屏横线会叠成噪点/横纹（用户实测：
-  // 「屏幕上好多横线」）。数字墙激活时自动移除扫描线；汉字雨较稀疏可共存。
+  if (wantsCyber) startCyberPulse()
+  else if (f.matrixRain || f.hanziRain) startMatrixRain()
+  // 扫描线与数字墙/霓虹脉冲互斥：满屏数字或流字符 + 满屏横线会叠成噪点/横纹
+  //（用户实测：「屏幕上好多横线」）。数字墙/cyber 激活时自动移除扫描线；
+  // 汉字雨较稀疏可共存。
   // 注意必须「加」与「移」成对——之前只加不移，背景切换（视频↔图片）后
   // 已存在的扫描线 DOM 永远不会被清掉，横线又冒出来。
-  if (f.scanlines && !f.matrixRain) addScanlines()
+  if (f.scanlines && !f.matrixRain && !f.cyberPulse) addScanlines()
   else removeScanlines()
 }
 
@@ -3603,9 +3768,8 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                     jsx(Segmented, {
                       options: [
                         ['auto', '跟随主题'],
-                        ['none', '无'],
-                        ['matrix', '数字墙'],
-                        ['hanzi', '汉字雨']
+                        ['hanzi', '汉字雨'],
+                        ['cyber', '霓虹脉冲']
                       ],
                       value: fx.mode,
                       onChange: v => bumpFx({ mode: v })
@@ -3619,16 +3783,18 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                             children: [
                               jsx('input', {
                                 type: 'range',
-                                min: 12,
-                                max: 48,
+                                min: 1,
+                                max: fx.mode === 'cyber' ? 60 : 48,
                                 step: 1,
-                                value: fx.rainFontSize || (fx.mode === 'hanzi' ? 26 : 15),
+                                value: fx.rainFontSize || (fx.mode === 'hanzi' ? 26 : fx.mode === 'cyber' ? 8 : 15),
                                 onChange: e => bumpFx({ rainFontSize: Number(e.target.value) }),
                                 className: 'flex-1 accent-(--ui-accent)'
                               }),
                               jsx('span', {
                                 className: 'w-9 text-right font-mono text-[0.625rem] text-(--ui-text-tertiary)',
-                                children: '字 ' + (fx.rainFontSize || (fx.mode === 'hanzi' ? 26 : 15)) + 'px'
+                                children: fx.mode === 'cyber'
+                                  ? '元素 ' + (fx.rainFontSize || 8)
+                                  : '字 ' + (fx.rainFontSize || (fx.mode === 'hanzi' ? 26 : 15)) + 'px'
                               })
                             ]
                           }),
@@ -3637,7 +3803,7 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                             children: [
                               jsx('input', {
                                 type: 'range',
-                                min: 0.2,
+                                min: 0.05,
                                 max: 2,
                                 step: 0.05,
                                 value:
@@ -3646,7 +3812,7 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                                     ? extras.backgroundImage || extras.backgroundVideo
                                       ? 0.5
                                       : 0.3
-                                    : 1),
+                                    : fx.mode === 'cyber' ? 0.15 : 1),
                                 onChange: e => bumpFx({ rainSpeed: Number(e.target.value) }),
                                 className: 'flex-1 accent-(--ui-accent)'
                               }),
@@ -3659,7 +3825,7 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                                       ? extras.backgroundImage || extras.backgroundVideo
                                         ? 0.5
                                         : 0.3
-                                      : 1)).toFixed(2) +
+                                      : fx.mode === 'cyber' ? 0.15 : 1)).toFixed(2) +
                                   'x'
                               })
                             ]
