@@ -1220,6 +1220,38 @@ async function idbDel(key) {
   })
 }
 
+/** 列出 store 里所有 key（图片 img-* 与视频 v-* 共用 'videos' store）。 */
+async function idbKeys() {
+  const db = await idbOpen()
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(IDB_STORE).objectStore(IDB_STORE).getAllKeys()
+    req.onsuccess = () => resolve(req.result || [])
+    req.onerror = () => reject(req.error)
+  })
+}
+
+/** 清理孤儿图片 blob：保留当前 imageId（以及所有视频 v-*），删掉其余 img-*。
+ *  历史版本每次换图都会留一份旧图，实测库里积了 4 份重复的 1.6MB 图片。 */
+async function purgeOrphanImages() {
+  try {
+    const current = storage?.get(STORAGE_IMAGE_ID_KEY, null)
+    const keys = await idbKeys()
+    const orphans = keys.filter(k => typeof k === 'string' && k.startsWith('img-') && k !== current)
+    let removed = 0
+    for (const k of orphans) {
+      try {
+        await idbDel(k)
+        removed += 1
+      } catch {
+        // 单个删除失败不影响其它
+      }
+    }
+    if (removed > 0) console.info('[skin-studio] 清理孤儿图片 ' + removed + ' 个')
+  } catch {
+    // 清理失败不影响功能
+  }
+}
+
 // 请求持久化存储（IndexedDB 默认为「尽力而为」模式，配额小且可能被系统
 // 清理；persist() 后数据稳定保留，配额也大幅放宽）。
 async function ensurePersistentStorage() {
@@ -2305,10 +2337,10 @@ function drawCyber(now) {
     cyberRaf = null
     return
   }
-  // 帧率上限 30fps：极光/流线本身移动很慢，30fps 与 60fps 视觉无差，
-  // 但 canvas 绘制次数减半、CPU 明显下降。cyberT 仍按真实时间推进，
-  // 所以速度参数的手感不受影响。
-  if (cyberLast && now - cyberLast < 32) {
+  // 帧率上限 20fps：极光/流线本身移动很慢，20fps 视觉上仍然顺滑，
+  // 但 canvas 绘制次数只有 60fps 的三分之一，CPU 显著下降。cyberT 仍按
+  // 真实时间推进，所以速度参数的手感不受影响。
+  if (cyberLast && now - cyberLast < 50) {
     cyberRaf = requestAnimationFrame(drawCyber)
     return
   }
@@ -2878,6 +2910,9 @@ export default {
 
     // 同样恢复本地背景图片（大图片持久化）。
     restoreLocalImage()
+
+    // 清理历史遗留的孤儿图片 blob（旧版本换图时不会删上一张）。
+    purgeOrphanImages()
 
     // Persistence across restarts/updates: if the backend config still points
     // at a forge skin, re-assert it (re-writing display.skin bumps the config
