@@ -1932,6 +1932,9 @@ function ensureFxContainer() {
 }
 
 function removeFx() {
+  // cyber 极光：先停动画并释放画布。否则退出插件主题后动画仍在绘制已脱离
+  // 文档的画布；再次进入时又因 canvas 已存在而跳过创建，极光就不显示了。
+  stopCyberPulse()
   if (rainRaf) {
     cancelAnimationFrame(rainRaf)
     rainRaf = null
@@ -2246,6 +2249,8 @@ function addScanlines() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CYBER_COLORS = [[0, 255, 220], [120, 90, 255], [255, 60, 200]]
+/** 霓虹极光默认流线条数（渲染器与 UI 共用，避免两处默认值漂移）。 */
+const CYBER_DEFAULT_COUNT = 10
 let cyberCanvas = null
 let cyberCtx = null
 let cyberRaf = null
@@ -2261,7 +2266,7 @@ function cyberThemeForge() {
 /** 流线条数：复用 rainFontSize 滑块（cyber 模式下它表示「元素个数」）。 */
 function cyberCountOf(forge) {
   const n = Number(forge?.rainFontSize)
-  return Math.max(1, Math.min(60, Math.round(Number.isFinite(n) && n > 0 ? n : 10)))
+  return Math.max(1, Math.min(60, Math.round(Number.isFinite(n) && n > 0 ? n : CYBER_DEFAULT_COUNT)))
 }
 
 /** 速度：复用 rainSpeed（下限 0.05）。 */
@@ -2393,8 +2398,10 @@ function startCyberPulse() {
       `position:absolute;inset:0;width:100%;height:100%;z-index:${RAIN_Z};pointer-events:none;`
     host.appendChild(cyberCanvas)
     cyberCtx = cyberCanvas.getContext('2d')
+    // 只在首次创建时播种流线。调速度等设置也会触发 refresh → startFx →
+    // 这里，若无条件 seed，拖动滑块会把所有流线的位置/颜色/相位重置。
+    seedCyber()
   }
-  seedCyber()
   if (!cyberRaf) {
     cyberLast = 0
     cyberRaf = requestAnimationFrame(drawCyber)
@@ -3818,14 +3825,14 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
                                 min: 1,
                                 max: fx.mode === 'cyber' ? 60 : 48,
                                 step: 1,
-                                value: fx.rainFontSize || (fx.mode === 'hanzi' ? 26 : fx.mode === 'cyber' ? 8 : 15),
+                                value: fx.rainFontSize || (fx.mode === 'hanzi' ? 26 : fx.mode === 'cyber' ? CYBER_DEFAULT_COUNT : 15),
                                 onChange: e => bumpFx({ rainFontSize: Number(e.target.value) }),
                                 className: 'flex-1 accent-(--ui-accent)'
                               }),
                               jsx('span', {
                                 className: 'w-9 text-right font-mono text-[0.625rem] text-(--ui-text-tertiary)',
                                 children: fx.mode === 'cyber'
-                                  ? '元素 ' + (fx.rainFontSize || 8)
+                                  ? '元素 ' + (fx.rainFontSize || CYBER_DEFAULT_COUNT)
                                   : '字 ' + (fx.rainFontSize || (fx.mode === 'hanzi' ? 26 : 15)) + 'px'
                               })
                             ]
