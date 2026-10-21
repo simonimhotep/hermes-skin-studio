@@ -2234,21 +2234,21 @@ function addScanlines() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 赛博朋克 · 霓虹脉冲（Neon Pulse）
+// 赛博朋克 · 霓虹光柱（Neon Beams）
 //
-// 稀疏的霓虹「数据流」：每条流是一小串字符，沿固定方向缓慢漂移 + 呼吸明灭，
-// 拖尾淡出让画面留光轨。元素数量（1–60，默认 8）与速度（0.05–2，默认 0.15）
-// 都可调——刻意默认少而慢，不像数字墙那样满屏铺满，避免抢走正文注意力。
+// 稀疏的垂直霓虹光柱：每条是一道细长的渐变光带，横向缓慢漂移 + 呼吸明灭。
+// 用 DOM 元素实现（不是 canvas）——canvas 的拖尾要每帧填一层底色，叠在壁纸
+// 之上会把背景图整个盖住；DOM 天然透明，光柱之外完全透出壁纸。
+// 数量（1–60，默认 8）与速度（0.05–2，默认 0.15）都可调——刻意默认少而慢，
+// 不像数字墙那样满屏铺满，避免抢走正文注意力。
 // 颜色固定霓虹系（青/品红/紫/绿/金），不跟主题 accent：主题色可能是暖白或
 // 浅色，会让「赛博」感消失（与汉字雨固定宣纸色同理）。
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CYBER_COLORS = ['#00E5FF', '#FF2E88', '#B026FF', '#00E56A', '#FFC400']
-const CYBER_GLYPHS = '01<>[]{}/\\|=+*#@%$&'
-let cyberCanvas = null
-let cyberCtx = null
+let cyberLayer = null
+let cyberBeams = []
 let cyberRaf = null
-let cyberNodes = []
 let cyberLast = 0
 
 function cyberThemeForge() {
@@ -2268,102 +2268,68 @@ function cyberSpeedOf(forge) {
   return Math.max(0.05, Math.min(3, Number.isFinite(s) && s > 0 ? s : 0.15))
 }
 
-function seedCyber(w, h) {
+/** 重建光柱：数量变化 / 窗口尺寸变化时调用。 */
+function seedCyber() {
+  if (!cyberLayer) return
+  cyberLayer.innerHTML = ''
   const count = cyberCountOf(cyberThemeForge())
-  const rand = (a, b) => a + Math.random() * (b - a)
-  cyberNodes = Array.from({ length: count }, () => {
-    const len = 2 + Math.floor(Math.random() * 3)
-    return {
+  const w = window.innerWidth
+  cyberBeams = []
+  for (let i = 0; i < count; i++) {
+    const color = CYBER_COLORS[i % CYBER_COLORS.length]
+    const width = 1 + Math.random() * 3
+    const el = document.createElement('div')
+    // 垂直渐变：两端透明、中间实色 → 一道柔和光柱。元素本身没有底色，
+    // 光柱之外完全透出背景图（这正是 canvas 拖尾做不到的）。
+    el.style.cssText =
+      'position:absolute;top:0;bottom:0;pointer-events:none;will-change:transform,opacity;' +
+      `width:${width}px;filter:blur(${width > 2.5 ? 2 : 1}px);opacity:0;` +
+      `background:linear-gradient(to bottom, transparent 0%, ${color} 35%, ${color} 65%, transparent 100%);`
+    cyberLayer.appendChild(el)
+    cyberBeams.push({
+      el,
       x: Math.random() * w,
-      y: Math.random() * h,
-      angle: rand(0, Math.PI * 2),
-      base: rand(0.02, 0.06), // 每条流的基础漂移速度（再乘全局 speed）
-      len,
-      chars: Array.from({ length: len }, () => CYBER_GLYPHS[Math.floor(Math.random() * CYBER_GLYPHS.length)]),
-      color: CYBER_COLORS[Math.floor(Math.random() * CYBER_COLORS.length)],
-      phase: Math.random() * Math.PI * 2,
-      size: Math.round(rand(9, 14))
-    }
-  })
-}
-
-function resizeCyber() {
-  if (!cyberCanvas) return
-  cyberCanvas.width = window.innerWidth
-  cyberCanvas.height = window.innerHeight
-  seedCyber(cyberCanvas.width, cyberCanvas.height)
+      vx: (Math.random() - 0.5) * 0.5, // 横向漂移（再乘 speed）
+      phase: Math.random() * Math.PI * 2
+    })
+  }
 }
 
 function drawCyber(now) {
-  if (!cyberCtx || !cyberCanvas) return
-  // 窗口尺寸变了 → 重新适配（避免拉伸/裁剪）。
-  if (cyberCanvas.width !== window.innerWidth || cyberCanvas.height !== window.innerHeight) {
-    resizeCyber()
-  }
-  const ctx = cyberCtx
-  const w = cyberCanvas.width
-  const h = cyberCanvas.height
+  if (!cyberLayer) return
   const forge = cyberThemeForge()
   const speed = cyberSpeedOf(forge)
+  // 数量变了（用户拖滑块）→ 重建光柱
+  if (cyberBeams.length !== cyberCountOf(forge)) {
+    seedCyber()
+  }
   const dt = Math.min(64, Math.max(0, now - (cyberLast || now)))
   cyberLast = now
-
-  // 拖尾淡出：每帧盖一层半透明底色，留下淡淡光轨（赛博感来源之一）。
-  ctx.fillStyle = 'rgba(0,0,0,0.14)'
-  ctx.fillRect(0, 0, w, h)
-
-  for (const n of cyberNodes) {
-    const step = n.base * speed * dt * 0.09
-    n.x += Math.cos(n.angle) * step
-    n.y += Math.sin(n.angle) * step
-    // 环绕边缘
-    if (n.x < -60) n.x = w + 60
-    if (n.x > w + 60) n.x = -60
-    if (n.y < -60) n.y = h + 60
-    if (n.y > h + 60) n.y = -60
-
-    // 呼吸（明灭）
-    n.phase += 0.0008 * dt * (0.5 + speed)
-    const pulse = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(n.phase))
-
-    ctx.save()
-    ctx.font = `${n.size}px "JetBrains Mono", ui-monospace, monospace`
-    ctx.textBaseline = 'middle'
-    ctx.shadowBlur = n.size * 1.3
-    ctx.shadowColor = n.color
-    for (let i = 0; i < n.chars.length; i++) {
-      // 尾部渐隐：头亮尾淡
-      const a = pulse * (1 - i / (n.chars.length + 0.5))
-      if (a <= 0.02) continue
-      ctx.globalAlpha = a
-      ctx.fillStyle = i === 0 ? '#FFFFFF' : n.color
-      const ox = Math.cos(n.angle) * i * n.size * 0.85
-      const oy = Math.sin(n.angle) * i * n.size * 0.85
-      ctx.fillText(n.chars[i], n.x + ox, n.y + oy)
-    }
-    ctx.restore()
-
-    // 缓慢刷新字符——低速下几乎不闪，只保留「数据在变」的感觉。
-    if (Math.random() < 0.0008 * (0.5 + speed) * dt) {
-      const i = Math.floor(Math.random() * n.chars.length)
-      n.chars[i] = CYBER_GLYPHS[Math.floor(Math.random() * CYBER_GLYPHS.length)]
-    }
+  const w = window.innerWidth
+  for (const b of cyberBeams) {
+    // 横向缓慢漂移 + 环绕
+    b.x += b.vx * speed * dt * 0.05
+    if (b.x < -12) b.x = w + 12
+    if (b.x > w + 12) b.x = -12
+    // 呼吸：透明度在 0.12–0.62 之间缓慢起伏
+    b.phase += 0.0006 * dt * (0.5 + speed)
+    const pulse = 0.12 + 0.5 * (0.5 + 0.5 * Math.sin(b.phase))
+    b.el.style.transform = `translateX(${b.x}px)`
+    b.el.style.opacity = pulse.toFixed(3)
   }
-
   cyberRaf = requestAnimationFrame(drawCyber)
 }
 
 function startCyberPulse() {
   const host = ensureFxContainer()
-  if (!cyberCanvas) {
-    cyberCanvas = document.createElement('canvas')
-    cyberCanvas.className = 'ss-cyber'
-    cyberCanvas.style.cssText =
-      `position:absolute;inset:0;width:100%;height:100%;z-index:${RAIN_Z};pointer-events:none;`
-    host.appendChild(cyberCanvas)
-    cyberCtx = cyberCanvas.getContext('2d')
+  if (!cyberLayer) {
+    cyberLayer = document.createElement('div')
+    cyberLayer.className = 'ss-cyber'
+    cyberLayer.style.cssText =
+      `position:absolute;inset:0;z-index:${RAIN_Z};pointer-events:none;overflow:hidden;`
+    host.appendChild(cyberLayer)
   }
-  resizeCyber()
+  seedCyber()
   if (!cyberRaf) {
     cyberLast = 0
     cyberRaf = requestAnimationFrame(drawCyber)
@@ -2375,12 +2341,11 @@ function stopCyberPulse() {
     cancelAnimationFrame(cyberRaf)
     cyberRaf = null
   }
-  if (cyberCanvas) {
-    cyberCanvas.remove()
-    cyberCanvas = null
+  if (cyberLayer) {
+    cyberLayer.remove()
+    cyberLayer = null
   }
-  cyberCtx = null
-  cyberNodes = []
+  cyberBeams = []
 }
 
 function startFx(theme) {
