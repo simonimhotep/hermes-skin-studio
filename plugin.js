@@ -34,6 +34,7 @@ import {
   THEMES_AREA,
   ROUTES_AREA,
   SIDEBAR_NAV_AREA,
+  requestTheme,
   icons
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
@@ -1285,11 +1286,20 @@ function loadCustom() {
       // they can't block the theme save). Older saves carry the data URI
       // inline in forge.backgroundImage — migrate it to the dedicated key.
       const imgKey = storage?.get(STORAGE_IMG_KEY, null)
-      const inline = typeof forge.backgroundImage === 'string' && forge.backgroundImage.startsWith('data:')
-      if (typeof imgKey === 'string' && imgKey.startsWith('data:')) {
+      const inlineData = typeof forge.backgroundImage === 'string' && forge.backgroundImage.startsWith('data:')
+      // 保护：超大 data URI（>512KB）会让 registerTheme 注册主题时被拖垮，
+      // 导致后续 nav/面板入口全部注册失败（表现为「调不出来」）。这里直接
+      // 忽略超大图片数据，并清掉坏数据，让插件能正常加载。
+      const MAX_INLINE_IMG = 512 * 1024
+      if (typeof imgKey === 'string' && imgKey.startsWith('data:') && imgKey.length <= MAX_INLINE_IMG) {
         forge.backgroundImage = imgKey
-      } else if (inline) {
+      } else if (typeof imgKey === 'string' && imgKey.length > MAX_INLINE_IMG) {
+        forge.backgroundImage = null
+        try { storage?.remove(STORAGE_IMG_KEY) } catch { /* 清除失败不影响加载 */ }
+      } else if (inlineData && forge.backgroundImage.length <= MAX_INLINE_IMG) {
         // keep as-is; next saveCustom() migrates it out of the theme JSON
+      } else if (inlineData) {
+        forge.backgroundImage = null
       }
       return {
         ...base,
@@ -1355,11 +1365,18 @@ async function restoreLocalImage() {
     const imgId = storage?.get(STORAGE_IMAGE_ID_KEY, null)
     if (!imgId || !customTheme) return
     const blob = await idbGet(imgId)
+    // 竞态保护：恢复期间用户已换图（customTheme 的 localImageId 已变），不覆盖。
+    if (customTheme.forge.localImageId && customTheme.forge.localImageId !== imgId) return
     if (blob) {
       const url = URL.createObjectURL(blob)
       customTheme.forge.backgroundImage = url
       customTheme.forge.localImageId = imgId
       publishCustom()
+      // 广播恢复事件，让面板同步 state（防抖保存不再用无图片的旧 state
+      // 覆盖掉已恢复的图片）——镜像 restoreLocalVideo 的 video-restored。
+      document.dispatchEvent(
+        new CustomEvent('skin-studio:image-restored', { detail: { url, id: imgId } })
+      )
     } else {
       // IDB 记录丢失（数据库被清）——清理标记，避免死引用。
       storage?.remove(STORAGE_IMAGE_ID_KEY)
@@ -2351,7 +2368,20 @@ async function activateSkin(theme) {
         colors: skinTokensFromTheme(theme)
       }
     })
-    host.notify({ kind: 'info', message: `"${theme.label}" 已应用——约 1 秒后重绘` })
+    // 同时设置桌面端当前主题（data-hermes-theme），让 applyForge 的 CSS 注入
+    // 引擎（背景图片/壁纸/动画）生效——否则只写后端 display.skin，桌面端当前
+    // 主题不变，背景图等扩展功能不会重绘。
+    const themeApplied = requestTheme(name)
+    if (!themeApplied) {
+      // 主题未在桌面端注册（resolveTheme 失败）——后端 skin 已保存，
+      // 但桌面主题未切换，背景图/壁纸等扩展功能不会重绘。明确告知，不误报成功。
+      host.notify({
+        kind: 'warn',
+        message: `"${theme.label}" 的皮肤已保存，但桌面主题未切换（该主题未在主题列表注册）——请手动在命令面板 → 主题里选择。`
+      })
+    } else {
+      host.notify({ kind: 'info', message: `"${theme.label}" 已应用——约 1 秒后重绘` })
+    }
     return res
   } catch (e) {
     host.notify({
@@ -2785,6 +2815,12 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
     const imageId = 'img-' + Date.now()
     setLocalFile({ name: file.name, size: file.size })
     bumpExtras({ backgroundImage: objUrl, localImageId: imageId })
+    // 背景图只有在当前主题是皮肤工坊主题时才会显示（applyForge 依赖
+    // data-hermes-theme）。若当前不是，自动激活自定义主题，让背景图立即
+    // 生效——否则只存不显示，用户会以为没反应。
+    if (!isForgeActive) {
+      requestTheme(CUSTOM_NAME)
+    }
     ensurePersistentStorage()
       .then(() => idbPut(imageId, file))
       .then(() => {
@@ -2994,6 +3030,41 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
     return () => document.removeEventListener('skin-studio:video-restored', onRestore)
   }, [])
 
+  // 监听模块级 restoreLocalImage 的恢复事件：同步面板 state（防抖保存
+  // 不再用无图片的旧 state 覆盖 customTheme 的已恢复图片）。
+  useEffect(() => {
+    const onImageRestore = e => {
+      const d = e.detail || {}
+      setState(prev => {
+        // 竞态保护：恢复期间用户已换图（localImageId 已变），不覆盖。
+        if (prev.forge.localImageId && prev.forge.localImageId !== d.id) return prev
+        return { ...prev, forge: { ...prev.forge, backgroundImage: d.url, localImageId: d.id } }
+      })
+    }
+    document.addEventListener('skin-studio:image-restored', onImageRestore)
+    return () => document.removeEventListener('skin-studio:image-restored', onImageRestore)
+  }, [])
+
+  // 面板挂载时主动检查本地图片：若 state 缺图片但存储有 ID，异步读回同步
+  //（双保险——image-restored 事件可能在面板未打开时错过监听）。
+  useEffect(() => {
+    const imgId = storage?.get(STORAGE_IMAGE_ID_KEY, null)
+    if (imgId && !state.forge.backgroundImage) {
+      idbGet(imgId).then(blob => {
+        if (!blob) return
+        // 竞态保护：恢复期间用户清除/更换了图片（存储标记已变），则不覆盖。
+        if (storage?.get(STORAGE_IMAGE_ID_KEY, null) !== imgId) return
+        const url = URL.createObjectURL(blob)
+        setState(prev => {
+          // 双保险：用户已在面板选了新图（backgroundImage 非空），不覆盖。
+          if (prev.forge.backgroundImage) return prev
+          return { ...prev, forge: { ...prev.forge, backgroundImage: url, localImageId: imgId } }
+        })
+      }).catch(() => { /* 恢复失败不影响面板 */ })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     if (isForgeActive) inactiveWarned.current = false
     if (timer.current) clearTimeout(timer.current)
@@ -3005,6 +3076,13 @@ function PaneInner({ activeTheme, isForgeActive, wide = false }) {
       if (st.forge.localVideoId && !st.forge.backgroundVideo) {
         const cur = customTheme && customTheme.forge && customTheme.forge.backgroundVideo
         if (cur) st.forge.backgroundVideo = cur
+      }
+      // 图片补回：state 有 localImageId 但缺 blob 图片（图片由 IndexedDB
+      // 异步恢复、或面板 state 尚未同步）时，继承 customTheme 当前图片——
+      // 保证编辑永远生效，且不会覆盖掉已恢复的图片。
+      if (st.forge.localImageId && !st.forge.backgroundImage) {
+        const curImg = customTheme && customTheme.forge && customTheme.forge.backgroundImage
+        if (curImg) st.forge.backgroundImage = curImg
       }
       customTheme = st
       publishCustom()
