@@ -2386,11 +2386,11 @@ function drawCyber(now) {
     x.fill()
   }
 
-  // ── 透视网格：地平线以下，低 alpha 细线 ──
+  // ── 透视网格：地平线以下，细线（0.16 alpha / 0.85px，清晰但不抢正文）──
   const horizon = h * 0.7
   const vx = w / 2
-  x.strokeStyle = 'rgba(0,255,220,0.10)'
-  x.lineWidth = 0.6
+  x.strokeStyle = 'rgba(0,255,220,0.16)'
+  x.lineWidth = 0.85
   const N = 14
   for (let k = 0; k < N; k++) {
     const f = Math.pow((k + ((cyberT * 0.25) % 1)) / N, 2)
@@ -2403,10 +2403,10 @@ function drawCyber(now) {
     x.lineTo(vx + i * w * 0.12, h)
     x.stroke()
   }
-  // 地平线光晕（品红）：压到 0.18，原版 0.55 太抢眼
+  // 地平线光晕（品红）：压到 0.24，比原版 0.55 收敛但仍清晰可见
   const hg = x.createLinearGradient(0, horizon - 2, 0, horizon + 6)
   hg.addColorStop(0, 'rgba(255,60,200,0)')
-  hg.addColorStop(0.5, 'rgba(255,60,200,0.18)')
+  hg.addColorStop(0.5, 'rgba(255,60,200,0.24)')
   hg.addColorStop(1, 'rgba(255,60,200,0)')
   x.fillStyle = hg
   x.fillRect(0, horizon - 2, w, 8)
@@ -2423,7 +2423,7 @@ function drawCyber(now) {
       const u1 = head - s.len * ((k + 1) / steps)
       const a = (1 - k / steps) * 0.42
       x.strokeStyle = `rgba(${r},${g},${b},${a})`
-      x.lineWidth = 1.4 * (1 - k / steps) + 0.35
+      x.lineWidth = 2.0 * (1 - k / steps) + 0.5
       x.beginPath()
       x.moveTo(u0 * w, (s.y0 + Math.sin(u0 * s.freq + cyberT * 0.5 + s.phase) * s.amp) * h)
       x.lineTo(u1 * w, (s.y0 + Math.sin(u1 * s.freq + cyberT * 0.5 + s.phase) * s.amp) * h)
