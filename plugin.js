@@ -2625,13 +2625,11 @@ export default {
     // its local-storage theme even though the config says ss-*.
     reassertConfiguredSkin()
 
-    ctx.register({
-      id: 'pane',
-      area: 'panes',
-      title: '皮肤工坊',
-      data: { placement: 'right', width: '340px' },
-      render: () => jsx(ForgePane, {})
-    })
+    // 注意：这里刻意不注册 area: 'panes' 的右侧栏面板。
+    // Hermes 的 closeTreePane 对「只有一个 pane」的插件，会把关闭动作当成
+    // 禁用整个插件（setPluginEnabled(id, false)），导致侧边栏入口、主题、
+    // 设置项全部被清理。不注册 pane 就没有可关闭的面板，也就不会误触；
+    // 编辑统一走完整页面（下面的 ROUTES_AREA + 侧边栏入口 + 命令面板）。
 
     // Full page + sidebar nav row — discoverable next to the app's other
     // menu entries (Capabilities, Messaging, Artifacts).
