@@ -2337,10 +2337,9 @@ function drawCyber(now) {
     cyberRaf = null
     return
   }
-  // 帧率上限 20fps：极光/流线本身移动很慢，20fps 视觉上仍然顺滑，
-  // 但 canvas 绘制次数只有 60fps 的三分之一，CPU 显著下降。cyberT 仍按
-  // 真实时间推进，所以速度参数的手感不受影响。
-  if (cyberLast && now - cyberLast < 50) {
+  // 帧率上限 24fps（电影帧率，人眼流畅度阈值）：慢速极光足够顺滑，
+  // canvas 绘制只有 60fps 的 40%。cyberT 仍按真实时间推进，速度手感不变。
+  if (cyberLast && now - cyberLast < 1000 / 24) {
     cyberRaf = requestAnimationFrame(drawCyber)
     return
   }
@@ -2351,13 +2350,14 @@ function drawCyber(now) {
   if (cyberCanvas.width !== Math.round(w * dpr) || cyberCanvas.height !== Math.round(h * dpr)) {
     seedCyber()
   }
-  const speed = cyberSpeedOf(cyberThemeForge())
+  const forge = cyberThemeForge()
+  const speed = cyberSpeedOf(forge)
   const dt = Math.min(64, Math.max(0, now - (cyberLast || now)))
   cyberLast = now
   cyberT += dt * 0.001 * speed
 
   // 数量变了（用户拖滑块）→ 重建流线
-  if (cyberStreaks.length !== cyberCountOf(cyberThemeForge())) seedCyber()
+  if (cyberStreaks.length !== cyberCountOf(forge)) seedCyber()
 
   // 关键：透明清屏，不填底色——壁纸才能透出来（原版 aurora.html 填
   // '#07060f' 会把背景图完全盖住）。
